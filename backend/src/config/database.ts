@@ -3,9 +3,15 @@ import { config } from './env.js';
 
 const { Pool } = pg;
 
+// SSL configuration for production
+const sslConfig = config.server.isProduction
+    ? { rejectUnauthorized: false }
+    : undefined;
+
 // Create PostgreSQL connection pool
 export const pool = new Pool({
     connectionString: config.database.url,
+    ssl: sslConfig,
     min: config.database.pool.min,
     max: config.database.pool.max,
     idleTimeoutMillis: 30000,
