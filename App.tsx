@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { WagmiProvider } from 'wagmi';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RainbowKitProvider, ConnectButton } from '@rainbow-me/rainbowkit';
@@ -8,10 +8,19 @@ import { useAccount } from 'wagmi';
 
 import { STRATEGIES, ECOSYSTEMS, MOCK_NEWS_FEED } from './constants';
 import { PortfolioAllocation, MarketSentiment, AiRecommendation, StrategyCondition } from './types';
-import StrategyDraggable from './components/StrategyDraggable';
 import AssetTile from './components/AssetTile';
+import PortfolioOverview from './components/PortfolioOverview';
+import StrategyDraggable from './components/StrategyDraggable';
 import S3SentimentPanel from './components/S3SentimentPanel';
+import SentimentReasoning from './src/components/SentimentReasoning';
+import RebalanceHistory from './src/components/RebalanceHistory';
 import { ApiClient } from './services/apiClient';
+import { ToastProvider, toast } from './components/ToastProvider';
+import RebalanceHistoryModal from './components/RebalanceHistoryModal';
+import { useKeyboardDnd } from './hooks/useKeyboardDnd';
+import MobileHeader from './components/MobileHeader';
+import MobileSidebar from './components/MobileSidebar';
+import { DndProvider } from './components/DndProvider';
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid
 } from 'recharts';
@@ -42,10 +51,34 @@ const AppContent: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isDraggingStrategy, setIsDraggingStrategy] = useState(false);
   const [isLoadingAllocations, setIsLoadingAllocations] = useState(false);
+  const [ecosystemsWithBalances, setEcosystemsWithBalances] = useState(ECOSYSTEMS);
+  const [isLoadingBalances, setIsLoadingBalances] = useState(false);
+  const [showRebalanceHistory, setShowRebalanceHistory] = useState(false);
+
+  // Keyboard accessibility for drag-and-drop
+  const { selectedStrategyId, selectStrategy, clearSelection } = useKeyboardDnd();
+
+  // Mobile sidebar state
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+
+  // Debounce ref for saving allocations
+  const saveTimeouts = useRef<{ [key: string]: NodeJS.Timeout }>({});
+
+  // Handle keyboard drop
+  const handleKeyboardDrop = (strategyId: string, assetId: string) => {
+    addLayer(assetId, strategyId);
+    clearSelection();
+    toast.success('Strategy added via keyboard');
+  };
+
+  // Handle dnd-kit drop (for touch/mouse)
+  const handleDndKitDrop = (strategyId: string, assetId: string) => {
+    addLayer(assetId, strategyId);
+  };
 
   const currentEcosystem = useMemo(() =>
-    ECOSYSTEMS.find(e => e.id === selectedEcosystemId) || ECOSYSTEMS[0],
-    [selectedEcosystemId]
+    ecosystemsWithBalances.find(e => e.id === selectedEcosystemId) || ecosystemsWithBalances[0],
+    [selectedEcosystemId, ecosystemsWithBalances]
   );
 
   const filteredStrategies = useMemo(() =>
@@ -58,10 +91,14 @@ const AppContent: React.FC = () => {
     [currentEcosystem]
   );
 
-  // Load allocations when wallet connects
+  // Load allocations and balances when wallet connects
   useEffect(() => {
     if (isConnected && address) {
       loadUserAllocations();
+      loadWalletBalances();
+    } else {
+      // Reset to default mock balances when wallet disconnects
+      setEcosystemsWithBalances(ECOSYSTEMS);
     }
   }, [isConnected, address]);
 
@@ -81,10 +118,62 @@ const AppContent: React.FC = () => {
     }
   }, []);
 
-  // Load sentiment on mount
-  useEffect(() => {
-    handleAnalyzeMarket();
-  }, []);
+  // Load wallet balances from blockchain
+  const loadWalletBalances = async () => {
+    if (!address) return;
+
+    setIsLoadingBalances(true);
+    try {
+      // Fetch balances for Ethereum Mainnet (chainId: 1)
+      const ethBalances: any = await ApiClient.getWalletBalances(address, 1);
+
+      // Fetch balances for Arbitrum (chainId: 42161)
+      const arbBalances: any = await ApiClient.getWalletBalances(address, 42161);
+
+      // Update ecosystems with real balances
+      const updatedEcosystems = ECOSYSTEMS.map(ecosystem => {
+        const balances = ecosystem.id === 'eco-eth' ? ethBalances :
+          ecosystem.id === 'eco-arb' ? arbBalances : null;
+
+        if (!balances) {
+          return ecosystem; // Keep Solana as-is (not supported yet)
+        }
+
+        // Map token symbols to balances
+        const tokenMap = new Map(
+          balances.tokens.map((token: any) => [token.symbol, token])
+        );
+
+        // Update assets with real balances
+        const updatedAssets = ecosystem.assets.map(asset => {
+          const tokenBalance = tokenMap.get(asset.symbol) as any;
+          if (tokenBalance) {
+            return {
+              ...asset,
+              balance: tokenBalance.balanceUsd,
+              price: tokenBalance.price,
+            };
+          }
+          return { ...asset, balance: 0 }; // Zero out if not found
+        });
+
+        return {
+          ...ecosystem,
+          assets: updatedAssets,
+        };
+      });
+
+      setEcosystemsWithBalances(updatedEcosystems);
+      toast.success('Wallet balances loaded successfully');
+
+    } catch (error) {
+      console.error('Failed to load wallet balances:', error);
+      toast.error('Failed to load wallet balances. Using mock data.');
+      // Keep using default ECOSYSTEMS on error
+    } finally {
+      setIsLoadingBalances(false);
+    }
+  };
 
   const loadUserAllocations = async () => {
     if (!address) return;
@@ -120,6 +209,7 @@ const AppContent: React.FC = () => {
       }
     } catch (error) {
       console.error('Failed to load allocations:', error);
+      toast.error('Failed to load your allocations');
     } finally {
       setIsLoadingAllocations(false);
     }
@@ -131,22 +221,33 @@ const AppContent: React.FC = () => {
     const asset = currentEcosystem.assets.find(a => a.id === assetId);
     if (!asset) return;
 
-    try {
-      await ApiClient.saveAllocation({
-        walletAddress: address,
-        ecosystem: currentEcosystem.name,
-        assetId,
-        assetSymbol: asset.symbol,
-        amount: asset.balance,
-        strategyLayers: layers.map(l => ({
-          strategyId: l.strategyId,
-          condition: l.condition,
-          weight: l.weight
-        }))
-      });
-    } catch (error) {
-      console.error('Failed to save allocation:', error);
+    // Clear existing timeout for this asset
+    if (saveTimeouts.current[assetId]) {
+      clearTimeout(saveTimeouts.current[assetId]);
     }
+
+    // Set new timeout (debounce)
+    saveTimeouts.current[assetId] = setTimeout(async () => {
+      try {
+        await ApiClient.saveAllocation({
+          walletAddress: address,
+          ecosystem: currentEcosystem.name,
+          assetId,
+          assetSymbol: asset.symbol,
+          amount: asset.balance,
+          strategyLayers: layers.map(l => ({
+            strategyId: l.strategyId,
+            condition: l.condition,
+            weight: l.weight
+          }))
+        });
+      } catch (error) {
+        console.error('Failed to save allocation:', error);
+        toast.error('Failed to save allocation');
+      } finally {
+        delete saveTimeouts.current[assetId];
+      }
+    }, 1000); // 1s debounce
   };
 
   const handleDragStart = (e: React.DragEvent, strategyId: string) => {
@@ -248,22 +349,6 @@ const AppContent: React.FC = () => {
     }));
   };
 
-  const handleAnalyzeMarket = async () => {
-    setIsAnalyzing(true);
-    try {
-      const result: any = await ApiClient.getCurrentSentiment();
-      setSentiment(result);
-      setSentimentHistory(prev => {
-        const newPoint = { time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), score: result.score };
-        return [...prev, newPoint].slice(-10);
-      });
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
-
   const handleAutoRebalance = async () => {
     if (!sentiment) return;
     setIsRebalancing(true);
@@ -297,9 +382,11 @@ const AppContent: React.FC = () => {
           });
         });
         setIsRebalancing(false);
+        toast.success('Portfolio rebalanced by AI');
       }, 1500);
     } catch (e) {
       console.error(e);
+      toast.error('AI Auto-Pilot failed');
       setIsRebalancing(false);
     }
   };
@@ -307,55 +394,23 @@ const AppContent: React.FC = () => {
   const getAssetAllocation = (assetId: string) => allocations.find(a => a.assetId === assetId);
 
   return (
-    <div className="flex h-screen bg-defi-bg text-black font-sans overflow-hidden">
-      <style>{`
-          @keyframes gradientMove {
-              0% { background-position: 0% 50%; }
-              50% { background-position: 100% 50%; }
-              100% { background-position: 0% 50%; }
-          }
-      `}</style>
+    <DndProvider strategies={STRATEGIES} onStrategyDrop={handleDndKitDrop}>
+      <div className="flex flex-col lg:flex-row h-screen bg-defi-bg text-defi-text font-sans overflow-hidden">
+        {/* Mobile Header - only visible on mobile */}
+        <MobileHeader onMenuClick={() => setIsMobileSidebarOpen(true)} />
 
-      {/* Sidebar */}
-      <aside className="w-[340px] flex flex-col border-r-2 border-black bg-white z-20 shadow-xl">
-        <div className="p-6 border-b-2 border-black bg-black text-white shrink-0">
-          <div className="flex items-center gap-2 mb-1">
-            <Layers className="w-6 h-6" />
-            <h1 className="text-2xl font-display font-bold tracking-tight uppercase">DEFI LEGO</h1>
-          </div>
-          <p className="text-xs text-gray-400 font-mono tracking-widest uppercase opacity-70">Quantum Matrix v1.0</p>
-        </div>
-
-        <div className="p-4 border-b-2 border-black sticky top-0 z-20 bg-white">
-          <button className="w-full border-2 border-black p-3 flex items-center justify-center gap-2 text-sm font-bold uppercase hover:bg-gray-100 transition-colors">
-            Search Strategies
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2 custom-scrollbar bg-gray-50 relative">
-          <div className="flex items-center justify-between mb-4 pt-4 pb-2 border-b-2 border-black sticky top-0 bg-gray-50 z-10">
-            <span className="text-sm font-bold text-black uppercase tracking-wider">Strategy Blocks</span>
-            <span className="text-xs bg-black text-white px-2 py-0.5 font-bold">{filteredStrategies.length}</span>
-          </div>
-
-          <div className="pb-2">
-            {filteredStrategies.map(strat => (
-              <StrategyDraggable
-                key={strat.id}
-                strategy={strat}
-                onDragStart={handleDragStart}
-                onDragEnd={handleDragEnd}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* S³ Sentiment Panel */}
-        <S3SentimentPanel
-          onAnalyze={async () => {
+        {/* Mobile Sidebar Overlay */}
+        <MobileSidebar
+          isOpen={isMobileSidebarOpen}
+          onClose={() => setIsMobileSidebarOpen(false)}
+          strategies={filteredStrategies}
+          selectedStrategyId={selectedStrategyId}
+          onKeyboardSelect={selectStrategy}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onAnalyzeSentiment={async () => {
             try {
               const result: any = await ApiClient.getS3Sentiment({ timeHorizon: 'short' });
-              // Also update the legacy sentiment state for AI Auto-Pilot compatibility
               if (result) {
                 setSentiment({
                   score: result.normalizedScore,
@@ -371,135 +426,281 @@ const AppContent: React.FC = () => {
             }
           }}
         />
-      </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col relative bg-defi-bg">
-
-        {/* Header */}
-        <header className="h-16 border-b-2 border-black bg-white flex items-end justify-between px-6 z-20 sticky top-0 shadow-sm">
-          {/* Left: Ecosystem Tabs */}
-          <div className="flex items-end gap-4 h-full flex-1">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-3 hidden md:block shrink-0">Active Ecosystem:</span>
-
-            <div className="flex items-end -mb-[2px] h-full w-full overflow-x-auto no-scrollbar gap-1">
-              {ECOSYSTEMS.map(eco => {
-                const isActive = selectedEcosystemId === eco.id;
-                const nameParts = eco.name.split(' ');
-
-                return (
-                  <button
-                    key={eco.id}
-                    onClick={() => { setSelectedEcosystemId(eco.id); setAiRecommendation(null); }}
-                    className={`
-                        group flex items-center gap-2 px-5 transition-all relative shrink-0
-                        ${isActive
-                        ? 'bg-defi-bg border-2 border-black border-b-0 rounded-t-lg text-black z-10 h-[48px]'
-                        : 'text-gray-400 hover:text-black hover:bg-gray-50 rounded-t-lg mb-2 h-auto py-1.5'
-                      }
-                      `}
-                  >
-                    <img
-                      src={eco.icon}
-                      alt=""
-                      className={`w-4 h-4 object-contain ${isActive ? '' : 'grayscale opacity-50 group-hover:grayscale-0 group-hover:opacity-100'}`}
-                    />
-                    <div className={`flex flex-col items-start leading-none ${isActive ? 'font-bold' : 'font-medium text-xs'}`}>
-                      <span className={`${isActive ? 'text-base' : 'text-xs'} uppercase`}>{nameParts[0]}</span>
-                      {nameParts.length > 1 && (
-                        <span className={`${isActive ? 'text-[10px]' : 'text-[9px]'} uppercase tracking-wider`}>{nameParts.slice(1).join(' ')}</span>
-                      )}
-                    </div>
-
-                    {isActive && (
-                      <div className="absolute -bottom-[2px] left-0 right-0 h-[4px] bg-defi-bg z-20" />
-                    )}
-                  </button>
-                );
-              })}
+        {/* Desktop Sidebar - Glassmorphism */}
+        <aside className="hidden lg:flex w-[320px] flex-col glass-dark z-20 border-r border-defi-border">
+          {/* Logo Section */}
+          <div className="p-6 border-b border-defi-border shrink-0">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-defi-accent to-defi-purple flex items-center justify-center shadow-glow-accent">
+                <Layers className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h1 className="text-xl font-display font-bold tracking-tight gradient-text">DEFI LEGO</h1>
+                <p className="text-[10px] text-defi-text-muted font-mono tracking-widest uppercase">Quantum Matrix v1.0</p>
+              </div>
             </div>
           </div>
 
-          {/* Right: Actions */}
-          <div className="flex items-center gap-4 h-full pb-2.5 shrink-0 pl-4">
-            <ConnectButton />
+          {/* Search Bar */}
+          <div className="p-4 border-b border-defi-border">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-defi-text-muted" />
+              <input
+                type="text"
+                placeholder="Search strategies..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-defi-card border border-defi-border text-sm text-defi-text placeholder:text-defi-text-muted focus:outline-none focus:border-defi-accent focus:ring-1 focus:ring-defi-accent/50 transition-all"
+              />
+            </div>
+          </div>
 
-            <div className="relative group perspective-1000">
-              <button
-                onClick={handleAutoRebalance}
-                disabled={isRebalancing || !sentiment || !isConnected}
-                className={`
-                      relative flex items-center gap-2 px-4 py-2 border-2 border-black font-bold text-xs uppercase transition-all overflow-hidden
-                      ${isRebalancing || !isConnected ? 'bg-gray-100 text-gray-500' : 'bg-defi-purple text-white shadow-brutal-sm hover:shadow-brutal hover:-translate-y-0.5'}
+          {/* Strategy List */}
+          <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2 custom-scrollbar">
+            <div className="flex items-center justify-between py-4 sticky top-0 bg-transparent backdrop-blur-md z-10">
+              <span className="text-xs font-semibold text-defi-text-secondary uppercase tracking-wider">Strategy Blocks</span>
+              <span className="text-xs bg-defi-accent/20 text-defi-accent-light px-2.5 py-1 rounded-full font-semibold">{filteredStrategies.length}</span>
+            </div>
+
+            <div className="space-y-2 pb-2">
+              {filteredStrategies.map(strat => (
+                <StrategyDraggable
+                  key={strat.id}
+                  strategy={strat}
+                  onDragStart={handleDragStart}
+                  onDragEnd={handleDragEnd}
+                  isKeyboardSelected={selectedStrategyId === strat.id}
+                  onKeyboardSelect={selectStrategy}
+                />
+              ))}
+            </div>
+          </div>
+        </aside>
+
+        {/* Main Content */}
+        <main className="flex-1 flex flex-col relative">
+
+          {/* Header - Enhanced Glassmorphism */}
+          <header className="h-20 glass-dark border-b border-defi-border flex items-center justify-between px-4 lg:px-6 z-20 sticky top-0">
+            {/* Left: Network Selector with Container */}
+            <div className="flex items-center gap-4 h-full flex-1 min-w-0">
+              {/* Network Label */}
+              <div className="hidden lg:flex flex-col items-start gap-0.5 shrink-0">
+                <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-defi-text-muted">Network</span>
+                <div className="w-8 h-0.5 bg-gradient-to-r from-defi-accent to-transparent rounded-full"></div>
+              </div>
+
+              {/* Network Pills Container */}
+              <div className="flex items-center h-11 overflow-x-auto no-scrollbar gap-1.5 bg-defi-card/30 border border-defi-border/50 rounded-2xl p-1.5 backdrop-blur-sm">
+                <button
+                  onClick={() => { setSelectedEcosystemId('all'); setAiRecommendation(null); }}
+                  className={`
+                    group flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 relative shrink-0
+                    ${selectedEcosystemId === 'all'
+                      ? 'bg-gradient-to-r from-defi-accent to-defi-purple text-white shadow-glow-accent'
+                      : 'text-defi-text-secondary hover:text-defi-text hover:bg-defi-card/50'
+                    }
                   `}
-              >
-                {isRebalancing ? <Loader2 className="w-3 h-3 animate-spin" /> : <BrainCircuit className="w-3 h-3" />}
-                {isRebalancing ? 'PROCESSING...' : 'AI AUTO-PILOT'}
-              </button>
-            </div>
-          </div>
-        </header>
+                >
+                  <LayoutGrid className={`w-4 h-4 transition-transform duration-300 ${selectedEcosystemId === 'all' ? '' : 'opacity-60 group-hover:opacity-100 group-hover:scale-110'}`} />
+                  <span className={`text-xs font-semibold uppercase tracking-wide`}>All</span>
+                </button>
 
-        {/* Canvas */}
-        <div className="flex-1 overflow-auto bg-grid-pattern relative p-8">
-          <div className="max-w-7xl mx-auto">
-            {/* Page Title */}
-            <div className="mb-8 pb-4 border-b-2 border-black">
-              <h2 className="text-7xl font-display font-bold uppercase text-black leading-none tracking-tight mb-2">
-                {currentEcosystem.name}
-              </h2>
-              <div className="flex items-center gap-2 text-gray-600">
-                <Box className="w-4 h-4" />
-                <p className="text-xs font-mono font-bold uppercase tracking-widest">
-                  {isConnected ? `Connected: ${address?.slice(0, 6)}...${address?.slice(-4)}` : 'Connect wallet to save allocations'}
-                </p>
-              </div>
-            </div>
+                {ECOSYSTEMS.map(eco => {
+                  const isActive = selectedEcosystemId === eco.id;
 
-            {/* Grid */}
-            {isLoadingAllocations ? (
-              <div className="flex items-center justify-center h-64">
-                <Loader2 className="w-8 h-8 animate-spin" />
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8 pb-20">
-                {currentEcosystem.assets.map(asset => {
-                  const allocation = getAssetAllocation(asset.id);
                   return (
-                    <AssetTile
-                      key={asset.id}
-                      asset={asset}
-                      allocation={allocation || null}
-                      strategies={STRATEGIES}
-                      currentSentiment={sentiment}
-                      onDrop={handleDrop}
-                      onRemoveLayer={handleRemoveLayer}
-                      onUpdateCondition={handleUpdateCondition}
-                      onUpdateWeight={handleUpdateWeight}
-                      onDragStart={handleDragStart}
-                      onAutoFill={handleAutoFill}
-                      isGlobalDragging={isDraggingStrategy}
-                    />
+                    <button
+                      key={eco.id}
+                      onClick={() => { setSelectedEcosystemId(eco.id); setAiRecommendation(null); }}
+                      className={`
+                        group flex items-center gap-2 px-4 py-2 rounded-xl transition-all duration-300 relative shrink-0
+                        ${isActive
+                          ? 'bg-gradient-to-r from-defi-accent to-defi-purple text-white shadow-glow-accent'
+                          : 'text-defi-text-secondary hover:text-defi-text hover:bg-defi-card/50'
+                        }
+                      `}
+                    >
+                      <img
+                        src={eco.icon}
+                        alt=""
+                        className={`w-5 h-5 object-contain transition-all duration-300 ${isActive ? 'drop-shadow-lg' : 'grayscale opacity-50 group-hover:grayscale-0 group-hover:opacity-100 group-hover:scale-110'}`}
+                      />
+                      <span className={`text-xs font-semibold uppercase tracking-wide hidden sm:inline`}>{eco.name}</span>
+                    </button>
                   );
                 })}
               </div>
-            )}
+            </div>
+
+            {/* Center: Divider */}
+            <div className="hidden xl:block h-8 w-px bg-gradient-to-b from-transparent via-defi-border to-transparent mx-4"></div>
+
+            {/* Right: Actions */}
+            <div className="flex items-center gap-2 lg:gap-3 h-full shrink-0">
+              {/* S3 Sentiment Panel */}
+              <S3SentimentPanel
+                compact={true}
+                onAnalyze={async () => {
+                  try {
+                    const result: any = await ApiClient.getS3Sentiment({ timeHorizon: 'short' });
+                    if (result) {
+                      setSentiment({
+                        score: result.normalizedScore,
+                        label: result.label,
+                        summary: result.summary,
+                        trendingTopics: result.trendingTopics,
+                      });
+                    }
+                    return result;
+                  } catch (error) {
+                    console.error('Failed to fetch S³ sentiment:', error);
+                    return null;
+                  }
+                }}
+              />
+
+              {/* Divider */}
+              <div className="h-6 w-px bg-defi-border hidden sm:block"></div>
+
+              {/* Connect Button */}
+              <ConnectButton />
+
+              {/* AI Recommendations */}
+              <div className="relative group">
+                <button
+                  onClick={handleAutoRebalance}
+                  disabled={isRebalancing || !sentiment || !isConnected}
+                  className={`
+                      relative flex items-center gap-2 px-3 lg:px-5 py-2.5 rounded-xl font-semibold text-xs transition-all duration-300
+                      ${isRebalancing || !isConnected
+                      ? 'bg-defi-card border border-defi-border text-defi-text-muted cursor-not-allowed'
+                      : 'bg-gradient-to-r from-defi-accent via-defi-purple to-defi-accent bg-[length:200%_100%] animate-gradient-x text-white shadow-glow-purple hover:shadow-glow-accent hover:scale-[1.02]'
+                    }
+                  `}
+                  title="Get one-time AI recommendations for your portfolio"
+                >
+                  {isRebalancing ? <Loader2 className="w-4 h-4 animate-spin" /> : <BrainCircuit className="w-4 h-4" />}
+                  <span className="hidden md:inline font-semibold tracking-wide">{isRebalancing ? 'Processing...' : 'AI Recommendations'}</span>
+                  <span className="inline md:hidden font-semibold">AI</span>
+                </button>
+
+                {/* Tooltip */}
+                <div className="absolute right-0 top-full mt-3 w-72 p-4 glass-dark rounded-2xl text-xs opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 z-50 shadow-glass-lg border border-defi-border/50">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-defi-accent to-defi-purple flex items-center justify-center">
+                      <BrainCircuit className="w-4 h-4 text-white" />
+                    </div>
+                    <span className="font-semibold text-defi-text text-sm">AI Portfolio Insights</span>
+                  </div>
+                  <p className="text-defi-text-secondary mb-3 leading-relaxed">Generates intelligent recommendations based on real-time market sentiment analysis.</p>
+                  <div className="flex items-center gap-2 text-defi-text-muted text-[10px] bg-defi-card/50 rounded-lg p-2">
+                    <Zap className="w-3 h-3 text-defi-warning" />
+                    <span>Auto-rebalancing runs every 30 minutes in background</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </header>
+
+          {/* Canvas */}
+          <div className="flex-1 overflow-auto bg-grid-pattern relative p-6 lg:p-8">
+            <div className="max-w-7xl mx-auto">
+              {/* Page Title */}
+              <div className="mb-8 pb-6 border-b border-defi-border">
+                <h2 className="text-4xl lg:text-6xl font-display font-bold leading-none tracking-tight mb-3 gradient-text">
+                  {selectedEcosystemId === 'all' ? 'Global Portfolio' : currentEcosystem.name}
+                </h2>
+                <div className="flex items-center gap-2 text-defi-text-secondary">
+                  <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-defi-success animate-pulse' : 'bg-defi-text-muted'}`} />
+                  <p className="text-xs font-medium">
+                    {isConnected ? `Connected: ${address?.slice(0, 6)}...${address?.slice(-4)}` : 'Connect wallet to save allocations'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Automated Rebalancing Info Banner */}
+              {isConnected && selectedEcosystemId !== 'all' && (
+                <div className="mb-6 p-4 glass-card rounded-2xl border-defi-purple/30 animate-fade-in">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-defi-purple/20 flex items-center justify-center shrink-0">
+                      <Zap className="w-4 h-4 text-defi-purple-light" />
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-sm mb-1 text-defi-purple-light">Automated Rebalancing Active</h3>
+                      <p className="text-xs text-defi-text-secondary leading-relaxed">
+                        Your saved allocations are automatically monitored and rebalanced <span className="text-defi-text font-medium">every 30 minutes</span> based on market sentiment.
+                        <button
+                          onClick={() => setShowRebalanceHistory(true)}
+                          className="ml-1 text-defi-accent-light hover:text-defi-accent font-medium transition-colors"
+                        >
+                          View history →
+                        </button>
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Grid or Portfolio Overview */}
+              {selectedEcosystemId === 'all' ? (
+                <PortfolioOverview
+                  ecosystems={ecosystemsWithBalances}
+                  allocations={allocations}
+                  strategies={STRATEGIES}
+                />
+              ) : isLoadingAllocations ? (
+                <div className="flex items-center justify-center h-64">
+                  <Loader2 className="w-8 h-8 animate-spin text-defi-accent" />
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 pb-20">
+                  {currentEcosystem.assets.map((asset, index) => {
+                    const allocation = getAssetAllocation(asset.id);
+                    return (
+                      <div key={asset.id} className="animate-fade-in-up" style={{ animationDelay: `${index * 0.1}s` }}>
+                        <AssetTile
+                          asset={asset}
+                          allocation={allocation || null}
+                          strategies={STRATEGIES}
+                          currentSentiment={sentiment}
+                          onDrop={handleDrop}
+                          onRemoveLayer={handleRemoveLayer}
+                          onUpdateCondition={handleUpdateCondition}
+                          onUpdateWeight={handleUpdateWeight}
+                          onDragStart={handleDragStart}
+                          onAutoFill={handleAutoFill}
+                          onAddStrategy={(assetId, strategyId) => addLayer(assetId, strategyId)}
+                          isGlobalDragging={isDraggingStrategy}
+                          selectedStrategyId={selectedStrategyId}
+                          onKeyboardDrop={handleKeyboardDrop}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      </main>
-    </div>
+          <RebalanceHistory walletAddress={address} />
+        </main>
+      </div>
+    </DndProvider>
   );
 };
 
 const App: React.FC = () => {
   return (
-    <WagmiProvider config={config}>
-      <QueryClientProvider client={queryClient}>
-        <RainbowKitProvider>
-          <AppContent />
-        </RainbowKitProvider>
-      </QueryClientProvider>
-    </WagmiProvider>
+    <ToastProvider>
+      <WagmiProvider config={config}>
+        <QueryClientProvider client={queryClient}>
+          <RainbowKitProvider>
+            <AppContent />
+          </RainbowKitProvider>
+        </QueryClientProvider>
+      </WagmiProvider>
+    </ToastProvider>
   );
 };
 

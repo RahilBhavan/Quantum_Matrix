@@ -30,18 +30,17 @@ contract RebalanceOptimizer {
      * @param user User address
      * @param asset Asset address
      * @param currentSentiment Current market sentiment (0-100)
-     * @return shouldRebalance Whether rebalancing should occur
+     * @return recommendRebalance Whether rebalancing should occur
      * @return reason Reason for decision
      */
     function shouldRebalance(
         address user,
         address asset,
         uint8 currentSentiment
-    ) external view returns (bool shouldRebalance, string memory reason) {
+    ) external view returns (bool recommendRebalance, string memory reason) {
         // Get user allocation
         (
             address allocAsset,
-            ,
             uint256 totalDeposited,
             uint256 lastRebalance
         ) = vault.userAllocations(user, asset);
@@ -90,7 +89,7 @@ contract RebalanceOptimizer {
             return 0;
         }
         
-        (, , uint256 totalDeposited, ) = vault.userAllocations(user, asset);
+        (, uint256 totalDeposited, ) = vault.userAllocations(user, asset);
         
         uint256 totalDeviation = 0;
         uint256 activeWeight = 0;

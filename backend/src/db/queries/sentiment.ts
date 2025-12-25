@@ -1,5 +1,5 @@
 import pool from '../../config/database.js';
-import type { MarketSentiment } from '../types/index.js';
+import type { MarketSentiment } from '../../types/index';
 
 export class SentimentQueries {
     /**

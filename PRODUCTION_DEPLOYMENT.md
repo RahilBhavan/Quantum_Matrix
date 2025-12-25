@@ -318,10 +318,7 @@ npm run type-check
 
 ### Backend Won't Start
 ```bash
-# Check logs
-railway logs
-
-# Test locally
+# Check build locally
 npm run dev
 ```
 

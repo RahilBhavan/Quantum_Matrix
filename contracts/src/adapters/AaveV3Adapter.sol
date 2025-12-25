@@ -4,6 +4,9 @@ pragma solidity ^0.8.22;
 import "../interfaces/IStrategyAdapter.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 // Aave V3 interfaces (simplified for now, will use proper imports after installing dependencies)
 interface IPool {
@@ -53,8 +56,9 @@ struct ReserveData {
  * @title AaveV3Adapter
  * @notice Strategy adapter for Aave V3 lending protocol
  * @dev Enables depositing assets to Aave V3 to earn lending yield
+ * @dev SECURITY: Includes Emergency Exit and Pausable functionality
  */
-contract AaveV3Adapter is IStrategyAdapter {
+contract AaveV3Adapter is IStrategyAdapter, Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     
     // Aave V3 contracts
@@ -65,13 +69,17 @@ contract AaveV3Adapter is IStrategyAdapter {
     address public immutable override asset;
     address public immutable aToken;
     
-    // User share tracking (needed because aTokens are rebasing)
+    // User share tracking 
+    // NOTE: Currently using 1:1 mapping (1 share = 1 asset unit). 
+    // In production V2, this should utilize getReserveNormalizedIncome() to track real yield accrual.
     mapping(address => uint256) public userShares;
     uint256 public totalShares;
     
     // Events
     event Deposited(address indexed user, uint256 amount, uint256 shares);
     event Withdrawn(address indexed user, uint256 shares, uint256 amount);
+    event EmergencyExit(uint256 amount);
+    event FundsRescued(address indexed token, address indexed recipient, uint256 amount);
     
     /**
      * @notice Initialize the Aave V3 adapter
@@ -83,7 +91,7 @@ contract AaveV3Adapter is IStrategyAdapter {
         address _pool,
         address _dataProvider,
         address _asset
-    ) {
+    ) Ownable(msg.sender) {
         require(_pool != address(0), "Invalid pool address");
         require(_dataProvider != address(0), "Invalid data provider address");
         require(_asset != address(0), "Invalid asset address");
@@ -103,7 +111,7 @@ contract AaveV3Adapter is IStrategyAdapter {
      * @param amount Amount to deposit
      * @return shares Amount of shares minted
      */
-    function deposit(address _asset, uint256 amount) external override returns (uint256 shares) {
+    function deposit(address _asset, uint256 amount) external override whenNotPaused returns (uint256 shares) {
         require(_asset == asset, "Invalid asset");
         require(amount > 0, "Amount must be greater than 0");
         
@@ -116,7 +124,7 @@ contract AaveV3Adapter is IStrategyAdapter {
         // Supply to Aave (receives aTokens automatically)
         pool.supply(asset, amount, address(this), 0);
         
-        // Calculate shares (1:1 for simplicity, could use exchange rate for precision)
+        // Calculate shares (1:1 for now)
         shares = amount;
         userShares[msg.sender] += shares;
         totalShares += shares;
@@ -131,12 +139,20 @@ contract AaveV3Adapter is IStrategyAdapter {
      * @param shares Amount of shares to burn
      * @return amount Amount of assets withdrawn
      */
-    function withdraw(uint256 shares) external override returns (uint256 amount) {
+    function withdraw(uint256 shares) external override nonReentrant returns (uint256 amount) {
         require(shares > 0, "Shares must be greater than 0");
         require(userShares[msg.sender] >= shares, "Insufficient balance");
         
         // Withdraw from Aave (burns aTokens, returns underlying asset)
-        amount = pool.withdraw(asset, shares, msg.sender);
+        // If contract is paused, users can still withdraw if funds are sitting in the contract (Emergency Exit scenario)
+        if (paused()) {
+            amount = shares; // 1:1 redemption from local balance
+            require(IERC20(asset).balanceOf(address(this)) >= amount, "Insufficient local liquidity for emergency withdraw");
+            IERC20(asset).safeTransfer(msg.sender, amount);
+        } else {
+            // Normal operation: withdraw from Aave
+            amount = pool.withdraw(asset, shares, msg.sender);
+        }
         
         // Update user shares
         userShares[msg.sender] -= shares;
@@ -145,6 +161,44 @@ contract AaveV3Adapter is IStrategyAdapter {
         emit Withdrawn(msg.sender, shares, amount);
         
         return amount;
+    }
+
+    /**
+     * @notice Emergency Exit: Withdraws all funds from Aave to this contract
+     * @dev Only owner can call. Used when Aave is at risk but not yet paused/hacked.
+     */
+    function emergencyExitFromAave() external onlyOwner {
+        uint256 aBalance = IERC20(aToken).balanceOf(address(this));
+        require(aBalance > 0, "No funds in Aave");
+        
+        pool.withdraw(asset, type(uint256).max, address(this));
+        _pause(); // Pause deposits, allow withdrawals from local balance
+        
+        emit EmergencyExit(aBalance);
+    }
+    
+    /**
+     * @notice Rescue tokens stuck in the contract
+     * @dev Only owner can call.
+     */
+    function rescueFunds(address token, address recipient, uint256 amount) external onlyOwner {
+        require(recipient != address(0), "Invalid recipient");
+        IERC20(token).safeTransfer(recipient, amount);
+        emit FundsRescued(token, recipient, amount);
+    }
+
+    /**
+     * @notice Pause deposits in case of emergency
+     */
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    /**
+     * @notice Unpause deposits
+     */
+    function unpause() external onlyOwner {
+        _unpause();
     }
     
     /**

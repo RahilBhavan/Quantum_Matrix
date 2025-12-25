@@ -2,6 +2,19 @@ import { logger } from '../middleware/logger.js';
 import { cacheService } from './cache.service.js';
 import { newsService } from './news.service.js';
 import { geminiService } from './gemini.service.js';
+import { macroEconomicService } from './macro-economic.service.js';
+import type { MacroInterpretation } from '../types/macro.types.js';
+import Sentiment from 'sentiment';
+
+// Initialize Sentiment Analyzer
+const sentimentAnalyzer = new Sentiment();
+
+// Base Weight Configuration
+const DEFAULT_WEIGHTS = {
+    MACRO_LOW_VOL: 0.10,
+    MACRO_HIGH_VOL: 0.25,
+    MACRO_NORMAL: 0.15,
+};
 
 /**
  * S³ - Sentiment Synthesis Score
@@ -11,8 +24,9 @@ import { geminiService } from './gemini.service.js';
  * - S_ml: Traditional ML baseline
  * - S_dl: Deep Learning temporal patterns
  * - S_trans: Transformer contextual understanding (Gemini)
+ * - S_macro: Macro-economic signals (CPI, Fed Rate, DXY)
  * 
- * Formula: S³ = (w_lex * S_lex + w_ml * S_ml + w_dl * S_dl + w_trans * S_trans) * C_score
+ * Formula: S³ = (w_lex * S_lex + w_ml * S_ml + w_dl * S_dl + w_trans * S_trans + w_macro * S_macro) * C_score
  */
 
 interface S3Components {
@@ -20,6 +34,7 @@ interface S3Components {
     S_ml: number;       // ML baseline (-1 to +1)
     S_dl: number;       // Deep learning (-1 to +1)
     S_trans: number;    // Transformer (-1 to +1)
+    S_macro: number;    // Macro-economic signal (-1 to +1)
 }
 
 interface S3Weights {
@@ -27,6 +42,7 @@ interface S3Weights {
     w_ml: number;
     w_dl: number;
     w_trans: number;
+    w_macro: number;
 }
 
 interface S3Result {
@@ -44,6 +60,15 @@ interface S3Result {
     };
     summary: string;
     trendingTopics: string[];
+    // Macro-economic layer
+    macroSignals?: {
+        compositeScore: number;
+        interpretation: MacroInterpretation;
+        cpiSignal: number;
+        rateSignal: number;
+        dxySignal: number;
+        dataFreshness: 'fresh' | 'stale' | 'fallback';
+    };
 }
 
 interface AnalysisContext {
@@ -74,7 +99,7 @@ class S3SentimentService {
         // Fetch real market data
         const marketData = await newsService.getAggregatedData();
 
-        // Get component scores
+        // Get component scores (including macro)
         const components = await this.getComponentScores(marketData);
 
         // Determine dynamic weights based on context
@@ -101,6 +126,22 @@ class S3SentimentService {
         // Apply confidence multiplier to final score
         const finalScore = rawScore * confidence;
 
+        // Fetch macro signals for result (already computed in components, fetch fresh for details)
+        let macroSignalsData: S3Result['macroSignals'];
+        try {
+            const macroSignals = await macroEconomicService.getMacroSignals();
+            macroSignalsData = {
+                compositeScore: macroSignals.compositeScore,
+                interpretation: macroSignals.interpretation,
+                cpiSignal: macroSignals.signals.cpiSignal,
+                rateSignal: macroSignals.signals.rateSignal,
+                dxySignal: macroSignals.signals.dxySignal,
+                dataFreshness: macroSignals.dataFreshness,
+            };
+        } catch (error) {
+            logger.warn('Could not include macro signals in result');
+        }
+
         // Build result
         const result: S3Result = {
             score: Math.round(finalScore * 1000) / 1000,
@@ -113,6 +154,7 @@ class S3SentimentService {
             resolution,
             summary: this.generateSummary(finalScore, confidence, marketData),
             trendingTopics: marketData.trendingCoins.slice(0, 5),
+            macroSignals: macroSignalsData,
         };
 
         // Cache result
@@ -123,6 +165,8 @@ class S3SentimentService {
             normalizedScore: result.normalizedScore,
             label: result.label,
             confidence: result.confidence,
+            macroWeight: weights.w_macro.toFixed(3),
+            macroSignal: components.S_macro.toFixed(3),
         });
 
         return result;
@@ -156,115 +200,90 @@ class S3SentimentService {
             S_trans = S_lex * 0.9; // Fallback to lexicon with slight dampening
         }
 
+        // S_macro: Macro-economic signal from global liquidity indicators
+        let S_macro = 0;
+        try {
+            const macroSignals = await macroEconomicService.getMacroSignals();
+            S_macro = macroSignals.compositeScore;
+            logger.debug('Macro signal fetched', { S_macro, interpretation: macroSignals.interpretation });
+        } catch (error) {
+            logger.warn('Failed to get macro signals, using neutral fallback');
+            S_macro = 0;
+        }
+
         return {
             S_lex: this.clamp(S_lex, -1, 1),
             S_ml: this.clamp(S_ml, -1, 1),
             S_dl: this.clamp(S_dl, -1, 1),
             S_trans: this.clamp(S_trans, -1, 1),
+            S_macro: this.clamp(S_macro, -1, 1),
         };
     }
 
     /**
      * Calculate Reddit-based sentiment score with INFLUENCE WEIGHTING
      * High engagement posts have more weight
+     * Uses AFINN-165 wordlist based sentiment analysis
      */
-    private calculateRedditSentiment(posts: Array<{ title: string; score: number; numComments: number; influenceScore?: number }>): number {
+    private calculateRedditSentiment(posts: Array<{ title: string; score: number; numComments: number; url?: string }>): number {
         if (posts.length === 0) return 0;
 
-        // Sentiment keywords with intensity weights
-        const bullishKeywords: Record<string, number> = {
-            'moon': 1.0, 'pump': 0.8, 'bullish': 1.0, 'ath': 1.2, 'buy': 0.6,
-            'long': 0.7, 'breakout': 0.9, 'rally': 1.0, 'soaring': 1.1, 'btfd': 0.8,
-            'hodl': 0.5, 'accumulate': 0.7, 'undervalued': 0.8, 'adoption': 0.9,
-        };
-        const bearishKeywords: Record<string, number> = {
-            'crash': 1.2, 'dump': 1.0, 'bearish': 1.0, 'dead': 0.9, 'sell': 0.6,
-            'short': 0.7, 'collapse': 1.1, 'scam': 1.0, 'rug': 1.2, 'ponzi': 1.1,
-            'plunge': 1.0, 'tank': 0.9, 'bubble': 0.8, 'warning': 0.7,
-        };
-
-        let weightedBullish = 0;
-        let weightedBearish = 0;
+        let weightedScore = 0;
         let totalInfluence = 0;
 
         for (const post of posts) {
-            const title = post.title.toLowerCase();
+            // Influence = log(score) * log(comments)
+            // Example: 100 upvotes, 10 comments => log(101)*log(11) ≈ 2 * 1 = 2
+            const influence = Math.log10(post.score + 2) * Math.log10(post.numComments + 2);
 
-            // Use influence score if available, otherwise calculate from engagement
-            const influence = post.influenceScore ??
-                (Math.log10(post.score + 1) * Math.log10(post.numComments + 1));
+            // Analyze title
+            const analysis = sentimentAnalyzer.analyze(post.title);
 
-            // Calculate sentiment for this post
-            let postBullish = 0;
-            let postBearish = 0;
+            // Score usually ranges -5 to +5, normalize to -1 to 1
+            const normalizedSentiment = this.clamp(analysis.score / 5, -1, 1);
 
-            for (const [keyword, intensity] of Object.entries(bullishKeywords)) {
-                if (title.includes(keyword)) postBullish += intensity;
-            }
-            for (const [keyword, intensity] of Object.entries(bearishKeywords)) {
-                if (title.includes(keyword)) postBearish += intensity;
-            }
-
-            // Weight by influence - high engagement posts matter more
-            weightedBullish += postBullish * influence;
-            weightedBearish += postBearish * influence;
+            weightedScore += normalizedSentiment * influence;
             totalInfluence += influence;
         }
 
         if (totalInfluence === 0) return 0;
 
-        // Normalize to -1 to +1
-        const rawSentiment = (weightedBullish - weightedBearish) / totalInfluence;
-        return this.clamp(rawSentiment, -1, 1);
+        return this.clamp(weightedScore / totalInfluence, -1, 1);
     }
 
     /**
      * Calculate trend-based sentiment (DL proxy) with CREDIBILITY WEIGHTING
+     * Now uses library-based sentiment analysis on news headlines
      */
-    private calculateTrendSentiment(news: Array<{ title: string; credibilityScore?: number }>): number {
+    private calculateTrendSentiment(news: Array<{ title: string; source?: string }>): number {
         if (news.length === 0) return 0;
 
-        // Sentiment keywords with intensity
-        const positiveWords: Record<string, number> = {
-            'surge': 1.0, 'rally': 0.9, 'growth': 0.7, 'adoption': 0.8, 'bullish': 1.0,
-            'record': 0.9, 'breakthrough': 1.0, 'success': 0.7, 'milestone': 0.8,
-            'partnership': 0.6, 'upgrade': 0.7, 'launch': 0.5, 'approval': 0.9,
-        };
-        const negativeWords: Record<string, number> = {
-            'crash': 1.2, 'fall': 0.8, 'decline': 0.7, 'bearish': 1.0, 'loss': 0.8,
-            'hack': 1.1, 'failure': 0.9, 'ban': 1.0, 'lawsuit': 0.9, 'investigation': 0.8,
-            'fraud': 1.1, 'warning': 0.7, 'risk': 0.5, 'concern': 0.6,
+        // Source credibility map (simple version)
+        const sourceCredibility: Record<string, number> = {
+            'CoinTelegraph': 0.8,
+            'CryptoPotato': 0.6,
+            'Decrypt': 0.85,
+            'Unknown Source': 0.4
         };
 
-        let weightedPositive = 0;
-        let weightedNegative = 0;
+        let weightedScore = 0;
         let totalCredibility = 0;
 
         for (const item of news) {
-            const title = item.title.toLowerCase();
-            const credibility = item.credibilityScore ?? 0.5;
+            const source = item.source || 'Unknown Source';
+            // Default to 0.5 if source not in map
+            const credibility = Object.entries(sourceCredibility).find(([key]) => source.includes(key))?.[1] ?? 0.5;
 
-            let itemPositive = 0;
-            let itemNegative = 0;
+            const analysis = sentimentAnalyzer.analyze(item.title);
+            const normalizedSentiment = this.clamp(analysis.score / 5, -1, 1);
 
-            for (const [word, intensity] of Object.entries(positiveWords)) {
-                if (title.includes(word)) itemPositive += intensity;
-            }
-            for (const [word, intensity] of Object.entries(negativeWords)) {
-                if (title.includes(word)) itemNegative += intensity;
-            }
-
-            // Weight by credibility - trusted sources matter more
-            weightedPositive += itemPositive * credibility;
-            weightedNegative += itemNegative * credibility;
+            weightedScore += normalizedSentiment * credibility;
             totalCredibility += credibility;
         }
 
         if (totalCredibility === 0) return 0;
 
-        // Normalize to -1 to +1
-        const rawSentiment = (weightedPositive - weightedNegative) / totalCredibility;
-        return this.clamp(rawSentiment * 2, -1, 1); // Scale up since keyword matches are sparse
+        return this.clamp(weightedScore / totalCredibility, -1, 1);
     }
 
     /**
@@ -272,7 +291,7 @@ class S3SentimentService {
      */
     private getEffectiveContext(
         provided?: Partial<AnalysisContext>,
-        marketData?: Awaited<ReturnType<typeof newsService.getAggregatedData>>
+        _marketData?: Awaited<ReturnType<typeof newsService.getAggregatedData>>
     ): AnalysisContext {
         return {
             dataSource: provided?.dataSource ?? 'mixed',
@@ -282,57 +301,89 @@ class S3SentimentService {
         };
     }
 
+
     /**
      * Calculate dynamic weights based on context
      * Weights must sum to 1.0
+     * Macro weight increases during high volatility (when global liquidity matters more)
      */
     private getDynamicWeights(context: AnalysisContext): S3Weights {
-        // Default balanced weights
+        // Macro weight varies by volatility regime
+        // High volatility: macro factors dominate sentiment
+        // Low volatility: crypto-specific signals matter more
+        let macroWeight = DEFAULT_WEIGHTS.MACRO_NORMAL; // Default: 15%
+        if (context.volatilityRegime === 'high') {
+            macroWeight = DEFAULT_WEIGHTS.MACRO_HIGH_VOL; // 25% - macro dominates in crisis
+        } else if (context.volatilityRegime === 'low') {
+            macroWeight = DEFAULT_WEIGHTS.MACRO_LOW_VOL; // 10% - macro less relevant in calm markets
+        }
+
+        // Remaining weight to distribute among other components
+        const remainingWeight = 1 - macroWeight;
+
+        // Default balanced weights (scaled to remaining)
         let weights: S3Weights = {
-            w_lex: 0.25,
-            w_ml: 0.20,
-            w_dl: 0.25,
-            w_trans: 0.30,
+            w_lex: 0.25 * remainingWeight,
+            w_ml: 0.20 * remainingWeight,
+            w_dl: 0.25 * remainingWeight,
+            w_trans: 0.30 * remainingWeight,
+            w_macro: macroWeight,
         };
 
         // Adjust based on data source
         if (context.dataSource === 'social_media') {
-            weights = { w_lex: 0.40, w_ml: 0.10, w_dl: 0.20, w_trans: 0.30 };
+            weights = {
+                w_lex: 0.40 * remainingWeight,
+                w_ml: 0.10 * remainingWeight,
+                w_dl: 0.20 * remainingWeight,
+                w_trans: 0.30 * remainingWeight,
+                w_macro: macroWeight,
+            };
         } else if (context.dataSource === 'news') {
-            weights = { w_lex: 0.15, w_ml: 0.15, w_dl: 0.25, w_trans: 0.45 };
+            weights = {
+                w_lex: 0.15 * remainingWeight,
+                w_ml: 0.15 * remainingWeight,
+                w_dl: 0.25 * remainingWeight,
+                w_trans: 0.45 * remainingWeight,
+                w_macro: macroWeight,
+            };
         }
 
         // Adjust for time horizon
         if (context.timeHorizon === 'short') {
-            weights.w_lex += 0.05;
-            weights.w_trans -= 0.05;
+            weights.w_lex += 0.03;
+            weights.w_trans -= 0.03;
         } else if (context.timeHorizon === 'long') {
-            weights.w_trans += 0.05;
-            weights.w_lex -= 0.05;
+            weights.w_trans += 0.03;
+            weights.w_lex -= 0.03;
+            // Long-term: macro matters even more
+            weights.w_macro += 0.05;
         }
 
         // Adjust for new assets
         if (context.assetMaturity === 'new') {
-            weights.w_lex += 0.10;
-            weights.w_ml -= 0.10;
+            weights.w_lex += 0.05;
+            weights.w_ml -= 0.05;
         }
 
         // Normalize to ensure sum = 1
-        const sum = weights.w_lex + weights.w_ml + weights.w_dl + weights.w_trans;
+        const sum = weights.w_lex + weights.w_ml + weights.w_dl + weights.w_trans + weights.w_macro;
         return {
             w_lex: weights.w_lex / sum,
             w_ml: weights.w_ml / sum,
             w_dl: weights.w_dl / sum,
             w_trans: weights.w_trans / sum,
+            w_macro: weights.w_macro / sum,
         };
     }
 
     /**
      * Calculate confidence score based on model agreement
      * Low standard deviation = high agreement = high confidence
+     * Includes macro signal in agreement calculation
      */
     private calculateConfidence(components: S3Components): number {
-        const scores = [components.S_lex, components.S_ml, components.S_dl, components.S_trans];
+        const scores = [components.S_lex, components.S_ml, components.S_dl, components.S_trans, components.S_macro];
         const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
         const variance = scores.reduce((sum, s) => sum + Math.pow(s - mean, 2), 0) / scores.length;
         const stdDev = Math.sqrt(variance);
@@ -346,14 +397,15 @@ class S3SentimentService {
     }
 
     /**
-     * Calculate weighted score from components
+     * Calculate weighted score from components (including macro)
      */
     private calculateWeightedScore(components: S3Components, weights: S3Weights): number {
         return (
             weights.w_lex * components.S_lex +
             weights.w_ml * components.S_ml +
             weights.w_dl * components.S_dl +
-            weights.w_trans * components.S_trans
+            weights.w_trans * components.S_trans +
+            weights.w_macro * components.S_macro
         );
     }
 

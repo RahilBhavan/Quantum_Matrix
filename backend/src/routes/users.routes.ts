@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { UserQueries } from '../db/queries/users.js';
 import { cacheService } from '../services/cache.service.js';
@@ -12,7 +12,7 @@ const router = Router();
  */
 router.post(
     '/',
-    asyncHandler(async (req, res) => {
+    asyncHandler(async (req: Request, res: Response) => {
         const { walletAddress } = req.body;
 
         if (!walletAddress) {
@@ -24,7 +24,7 @@ router.post(
 
         const user = await UserQueries.create(walletAddress);
 
-        res.status(201).json({
+        return res.status(201).json({
             success: true,
             data: user,
         });
@@ -37,7 +37,7 @@ router.post(
  */
 router.get(
     '/:address',
-    asyncHandler(async (req, res) => {
+    asyncHandler(async (req: Request, res: Response) => {
         const { address } = req.params;
 
         // Try cache first
@@ -66,7 +66,7 @@ router.get(
         // Cache result
         await cacheService.set(cacheKey, stats, CacheTTL.userStats);
 
-        res.json({
+        return res.json({
             success: true,
             data: stats,
         });

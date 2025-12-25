@@ -19,6 +19,7 @@ export interface MarketSentiment {
     score: number;
     label: 'Bearish' | 'Neutral' | 'Bullish' | 'Euphoric';
     summary: string;
+    reasoning?: string;
     trendingTopics: string[];
     confidence?: number;
 }
@@ -80,6 +81,28 @@ export interface AiRecommendation {
     }>;
     reasoning: string;
 }
+
+// Vault Deposit
+export interface VaultDeposit {
+    id: number;
+    userId: number;
+    walletAddress: string;
+    assetAddress: string;
+    assetSymbol: string;
+    amount: string;
+    amountUsd: number | null;
+    txHash: string | null;
+    status: 'pending' | 'success' | 'failed';
+    errorMessage: string | null;
+    gasCostEth: string | null;
+    gasCostUsd: number | null;
+    blockNumber: number | null;
+    createdAt: Date;
+    confirmedAt: Date | null;
+}
+
+// Vault Withdrawal
+export interface VaultWithdrawal extends VaultDeposit {}
 
 // API Response types
 export interface ApiResponse<T = any> {

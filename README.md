@@ -1,20 +1,48 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Quantum Matrix
 
-# Run and deploy your AI Studio app
+**A Modular DeFi Portfolio Manager with AI-Driven Multi-Chain Rebalancing.**
 
-This contains everything you need to run your app locally.
+## 🚀 Quick Start
 
-View your app in AI Studio: https://ai.studio/apps/drive/1GAKXUEdpI-R5NucbPDmN-60n2PsWxGuh
+### 1. Configuration
+We use a unified configuration system. You only need to edit **one file**.
 
-## Run Locally
+```bash
+# 1. Generate the config file
+./setup-env.sh
 
-**Prerequisites:**  Node.js
+# 2. Edit .env with your keys
+nano .env
+```
 
+**Key Variables:**
+- `GEMINI_API_KEY`: Required for AI Sentiment.
+- `VITE_WALLET_CONNECT_PROJECT_ID`: Required for wallet connection.
+- `DATABASE_URL`: Postgres connection string (Backend).
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+### 2. Run Locally
+
+**Frontend (UI):**
+```bash
+npm install
+npm run dev
+```
+*Opens at http://localhost:3000*
+
+**Backend (API & AI):**
+```bash
+cd backend
+npm install
+npm run dev
+```
+*Runs at http://localhost:3001*
+
+**Smart Contracts:**
+```bash
+cd contracts
+forge build
+```
+
+## 📚 Documentation
+- [Master Plan](./MASTER_PLAN.md) - Vision & Architecture
+- [Production Deployment](./PRODUCTION_DEPLOYMENT.md) - Live Launch Guide

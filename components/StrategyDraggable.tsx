@@ -1,34 +1,39 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useDraggable } from '@dnd-kit/core';
+import { CSS } from '@dnd-kit/utilities';
 import { Strategy } from '../types';
 import { Layers, TrendingUp, Shield, Zap, Binary, Activity, Hash, AlertCircle } from 'lucide-react';
 
 interface Props {
   strategy: Strategy;
-  onDragStart: (e: React.DragEvent, strategyId: string) => void;
+  onDragStart?: (e: React.DragEvent, strategyId: string) => void;
   onDragEnd?: () => void;
-  compact?: boolean; 
+  compact?: boolean;
+  useDndKit?: boolean;
+  isKeyboardSelected?: boolean;
+  onKeyboardSelect?: (strategyId: string) => void;
 }
 
-const getRiskColor = (risk: string) => {
+const getRiskGradient = (risk: string) => {
   switch (risk) {
-    case 'Low': return 'bg-defi-success'; // Green
-    case 'Medium': return 'bg-yellow-400'; // Yellow
-    case 'High': return 'bg-defi-danger'; // Red
-    case 'Degen': return 'bg-purple-600'; // Purple
-    default: return 'bg-gray-400';
+    case 'Low': return 'from-defi-success to-defi-cyan';
+    case 'Medium': return 'from-defi-warning to-defi-accent';
+    case 'High': return 'from-defi-danger to-defi-warning';
+    case 'Degen': return 'from-defi-purple to-defi-danger';
+    default: return 'from-gray-400 to-gray-500';
   }
 };
 
-const getRiskBorderColor = (risk: string) => {
-    switch (risk) {
-      case 'Low': return 'border-defi-success text-defi-success';
-      case 'Medium': return 'border-yellow-600 text-yellow-700'; // Darker for text/border
-      case 'High': return 'border-defi-danger text-defi-danger';
-      case 'Degen': return 'border-purple-600 text-purple-600';
-      default: return 'border-gray-400 text-gray-600';
-    }
-  };
+const getRiskBadgeStyle = (risk: string) => {
+  switch (risk) {
+    case 'Low': return 'bg-defi-success/20 text-defi-success-light border-defi-success/30';
+    case 'Medium': return 'bg-defi-warning/20 text-defi-warning border-defi-warning/30';
+    case 'High': return 'bg-defi-danger/20 text-defi-danger-light border-defi-danger/30';
+    case 'Degen': return 'bg-defi-purple/20 text-defi-purple-light border-defi-purple/30';
+    default: return 'bg-defi-card text-defi-text-muted border-defi-border';
+  }
+};
 
 const getIcon = (type: string) => {
   switch (type) {
@@ -41,19 +46,46 @@ const getIcon = (type: string) => {
   }
 };
 
-const StrategyDraggable: React.FC<Props> = ({ strategy, onDragStart, onDragEnd, compact }) => {
+const StrategyDraggable: React.FC<Props> = ({
+  strategy,
+  onDragStart,
+  onDragEnd,
+  compact,
+  useDndKit = true,
+  isKeyboardSelected = false,
+  onKeyboardSelect,
+}) => {
   const [isHovered, setIsHovered] = useState(false);
   const [coords, setCoords] = useState({ top: 0, left: 0 });
   const elementRef = useRef<HTMLDivElement>(null);
 
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    isDragging,
+  } = useDraggable({
+    id: strategy.id,
+    data: {
+      type: 'strategy',
+      strategy,
+    },
+  });
+
+  const dndKitStyle = transform ? {
+    transform: CSS.Translate.toString(transform),
+    zIndex: isDragging ? 1000 : undefined,
+  } : undefined;
+
   const handleMouseEnter = () => {
     if (elementRef.current && !compact) {
-        const rect = elementRef.current.getBoundingClientRect();
-        setCoords({
-            top: rect.top,
-            left: rect.right + 12 // 12px gap to the right
-        });
-        setIsHovered(true);
+      const rect = elementRef.current.getBoundingClientRect();
+      setCoords({
+        top: rect.top,
+        left: rect.right + 12
+      });
+      setIsHovered(true);
     }
   };
 
@@ -61,133 +93,152 @@ const StrategyDraggable: React.FC<Props> = ({ strategy, onDragStart, onDragEnd, 
     setIsHovered(false);
   };
 
-  // Close tooltip on scroll to prevent it from detaching visually
   useEffect(() => {
     const handleScroll = () => {
-        if (isHovered) setIsHovered(false);
+      if (isHovered) setIsHovered(false);
     };
     window.addEventListener('scroll', handleScroll, true);
     return () => window.removeEventListener('scroll', handleScroll, true);
   }, [isHovered]);
 
+  const combinedRef = (node: HTMLDivElement | null) => {
+    setNodeRef(node);
+    (elementRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+  };
+
   return (
     <>
       <div
-        ref={elementRef}
-        draggable
-        onDragStart={(e) => {
+        ref={useDndKit ? combinedRef : elementRef}
+        style={useDndKit ? dndKitStyle : undefined}
+        {...(useDndKit ? { ...attributes, ...listeners } : {
+          draggable: true,
+          onDragStart: (e: React.DragEvent) => {
             setIsHovered(false);
-            onDragStart(e, strategy.id);
-        }}
-        onDragEnd={onDragEnd}
+            onDragStart?.(e, strategy.id);
+          },
+          onDragEnd,
+        })}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
+        tabIndex={0}
+        role="button"
+        aria-label={`${strategy.name} strategy, ${strategy.riskLevel} risk, ${strategy.apy}% APY. Press Enter or Space to select for keyboard drop.`}
+        aria-pressed={isKeyboardSelected}
+        onKeyDown={(e) => {
+          if ((e.key === 'Enter' || e.key === ' ') && onKeyboardSelect) {
+            e.preventDefault();
+            onKeyboardSelect(strategy.id);
+          }
+        }}
         className={`
           cursor-grab active:cursor-grabbing
-          group relative transition-all duration-200 select-none
-          bg-white border-2 border-black
-          ${compact 
-            ? 'p-2 flex items-center gap-2' 
-            : 'mb-4 shadow-brutal-sm hover:shadow-brutal hover:-translate-y-0.5'}
+          group relative transition-all duration-300 select-none
+          glass-card rounded-xl
+          focus:outline-none focus-visible:ring-2 focus-visible:ring-defi-accent focus-visible:ring-offset-2 focus-visible:ring-offset-defi-bg
+          ${compact
+            ? 'p-2 flex items-center gap-2'
+            : 'mb-3 hover:border-defi-border-hover hover:-translate-y-1 hover:shadow-glass-lg'}
+          ${isDragging ? 'opacity-50 scale-105' : ''}
+          ${isKeyboardSelected ? 'ring-2 ring-defi-accent ring-offset-2 ring-offset-defi-bg border-defi-accent' : ''}
         `}
       >
-        {/* Left Colored Strip */}
+        {/* Left Gradient Strip */}
         {!compact && (
-            <div className={`absolute left-0 top-0 bottom-0 w-2 ${getRiskColor(strategy.riskLevel)} border-r-2 border-black`}></div>
+          <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-gradient-to-b ${getRiskGradient(strategy.riskLevel)}`}></div>
         )}
 
-        <div className={`${compact ? '' : 'pl-5 p-3'}`}>
-            {/* Header */}
-            <div className="flex justify-between items-start mb-2">
-              <div className="flex items-center gap-3">
-                  {/* Icon Box */}
-                  {!compact && (
-                      <div className="w-8 h-8 bg-black text-white flex items-center justify-center font-mono text-xs font-bold shrink-0">
-                          {getIcon(strategy.type)}
-                      </div>
-                  )}
-                  <h4 className={`font-display font-bold uppercase leading-none ${compact ? 'text-xs' : 'text-sm'}`}>
-                      {strategy.name}
-                  </h4>
-              </div>
-              
+        <div className={`${compact ? '' : 'pl-4 p-4'}`}>
+          {/* Header */}
+          <div className="flex justify-between items-start mb-2">
+            <div className="flex items-center gap-3">
+              {/* Icon Box */}
               {!compact && (
-                  <span className={`text-[10px] font-bold uppercase px-1 border ${getRiskBorderColor(strategy.riskLevel)}`}>
-                      {strategy.riskLevel}
-                  </span>
+                <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-defi-accent/20 to-defi-purple/20 border border-defi-border flex items-center justify-center text-defi-accent-light">
+                  {getIcon(strategy.type)}
+                </div>
               )}
+              <h4 className={`font-display font-semibold text-defi-text leading-none ${compact ? 'text-xs' : 'text-sm'}`}>
+                {strategy.name}
+              </h4>
             </div>
 
-            {/* Description */}
             {!compact && (
-                <p className="text-xs text-gray-600 mb-3 leading-tight font-medium line-clamp-2">
-                    {strategy.description}
-                </p>
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${getRiskBadgeStyle(strategy.riskLevel)}`}>
+                {strategy.riskLevel}
+              </span>
             )}
+          </div>
 
-            {/* Footer Tags & APY */}
-            {!compact && (
-                <div className="flex items-center justify-between pt-2 border-t border-black/10">
-                    <div className="flex gap-1">
-                        {strategy.tags.slice(0, 2).map(tag => (
-                            <span key={tag} className="text-[9px] font-bold uppercase border border-black px-1 bg-white text-black">
-                                {tag}
-                            </span>
-                        ))}
-                    </div>
-                    <div className="bg-green-100 text-green-800 border border-black px-1 text-[10px] font-bold font-mono">
-                        {strategy.apy}% APY
-                    </div>
-                </div>
-            )}
+          {/* Description */}
+          {!compact && (
+            <p className="text-xs text-defi-text-secondary mb-3 leading-relaxed line-clamp-2 pl-12">
+              {strategy.description}
+            </p>
+          )}
+
+          {/* Footer Tags & APY */}
+          {!compact && (
+            <div className="flex items-center justify-between pt-3 border-t border-defi-border pl-12">
+              <div className="flex gap-1.5">
+                {strategy.tags.slice(0, 2).map(tag => (
+                  <span key={tag} className="text-[9px] font-medium px-2 py-0.5 rounded-full bg-defi-card border border-defi-border text-defi-text-secondary">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+              <div className="bg-defi-success/20 text-defi-success-light border border-defi-success/30 px-2 py-0.5 rounded-full text-[10px] font-bold font-mono">
+                {strategy.apy}% APY
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Portal Tooltip */}
       {isHovered && !compact && createPortal(
-        <div 
-            className="fixed z-[9999] w-72 bg-black text-white p-5 border-2 border-white shadow-[8px_8px_0px_0px_rgba(0,0,0,0.2)] pointer-events-none animate-fade-in"
-            style={{ 
-                top: Math.min(coords.top, window.innerHeight - 200), // Prevent going off bottom
-                left: coords.left 
-            }}
+        <div
+          className="fixed z-[9999] w-72 glass-dark rounded-2xl p-5 shadow-glass-lg pointer-events-none animate-scale-in"
+          style={{
+            top: Math.min(coords.top, window.innerHeight - 280),
+            left: coords.left
+          }}
         >
-            <div className="flex items-center justify-between mb-3 pb-2 border-b border-white/20">
-                <span className={`text-xs font-bold uppercase px-1.5 py-0.5 rounded text-black ${getRiskColor(strategy.riskLevel)}`}>
-                    {strategy.riskLevel} Risk
-                </span>
-                <span className="font-mono text-xs text-defi-success font-bold">
-                    Target: {strategy.apy}% APY
-                </span>
-            </div>
+          <div className="flex items-center justify-between mb-4 pb-3 border-b border-defi-border">
+            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${getRiskBadgeStyle(strategy.riskLevel)}`}>
+              {strategy.riskLevel} Risk
+            </span>
+            <span className="font-mono text-xs text-defi-success font-bold">
+              Target: {strategy.apy}% APY
+            </span>
+          </div>
 
-            <h4 className="font-display font-bold text-xl uppercase mb-2 text-white tracking-wide">
-                {strategy.name}
-            </h4>
-            
-            <p className="text-sm text-gray-300 mb-4 leading-relaxed">
-                {strategy.description}
-            </p>
+          <h4 className="font-display font-bold text-xl text-defi-text mb-2">
+            {strategy.name}
+          </h4>
 
-            <div className="space-y-2">
-                <div className="flex items-center gap-2 text-xs text-gray-400 uppercase font-bold tracking-wider">
-                    <Binary className="w-3 h-3" />
-                    Strategy Type
-                </div>
-                <div className="text-sm font-medium">{strategy.type}</div>
-            </div>
+          <p className="text-sm text-defi-text-secondary mb-4 leading-relaxed">
+            {strategy.description}
+          </p>
 
-            <div className="mt-4 flex flex-wrap gap-2">
-                {strategy.tags.map(t => (
-                    <span key={t} className="text-[10px] font-mono border border-white/40 px-1.5 py-0.5 rounded-sm text-gray-300">
-                        #{t}
-                    </span>
-                ))}
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-[10px] text-defi-text-muted uppercase font-semibold tracking-wider">
+              <Binary className="w-3 h-3" />
+              Strategy Type
             </div>
-            
-            {/* Decorative Corner */}
-            <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-white/50"></div>
-            <div className="absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 border-white/50"></div>
+            <div className="text-sm font-medium text-defi-text">{strategy.type}</div>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            {strategy.tags.map(t => (
+              <span key={t} className="text-[10px] font-mono border border-defi-border px-2 py-1 rounded-lg text-defi-text-secondary bg-defi-card">
+                #{t}
+              </span>
+            ))}
+          </div>
+
+          {/* Glow accent */}
+          <div className={`absolute inset-0 rounded-2xl bg-gradient-to-br ${getRiskGradient(strategy.riskLevel)} opacity-5 pointer-events-none`}></div>
         </div>,
         document.body
       )}

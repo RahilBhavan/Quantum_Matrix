@@ -1,6 +1,5 @@
 import { logger } from '../middleware/logger.js';
 import { cacheService } from './cache.service.js';
-import { config } from '../config/env.js';
 
 /**
  * Video sentiment service for multimodal analysis
@@ -150,7 +149,7 @@ class VideoService {
                 throw new Error(`YouTube API error: ${response.status}`);
             }
 
-            const data = await response.json();
+            const data = (await response.json()) as any;
 
             return (data.items || []).map((item: any) => ({
                 id: item.id?.videoId || '',

@@ -1,5 +1,5 @@
 import pool from '../../config/database.js';
-import type { User } from '../types/index.js';
+import type { User } from '../../types/index';
 
 export class UserQueries {
     /**
@@ -26,6 +26,28 @@ export class UserQueries {
 
         if (result.rows.length === 0) return null;
         return this.mapRow(result.rows[0]);
+    }
+
+    /**
+     * Find user by ID
+     */
+    static async findById(userId: number): Promise<User | null> {
+        const query = `SELECT * FROM users WHERE id = $1`;
+        const result = await pool.query(query, [userId]);
+
+        if (result.rows.length === 0) return null;
+        return this.mapRow(result.rows[0]);
+    }
+
+    /**
+     * Get wallet address by user ID
+     */
+    static async getWalletAddress(userId: number): Promise<string | null> {
+        const query = `SELECT wallet_address FROM users WHERE id = $1`;
+        const result = await pool.query(query, [userId]);
+
+        if (result.rows.length === 0) return null;
+        return result.rows[0].wallet_address;
     }
 
     /**

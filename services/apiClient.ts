@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 interface ApiResponse<T> {
@@ -34,6 +35,10 @@ export class ApiClient {
     }
 
     // Sentiment endpoints
+    /**
+     * @deprecated Use getS3Sentiment() instead for multi-model sentiment analysis
+     * This endpoint only provides Gemini-based sentiment and is being phased out.
+     */
     static async getCurrentSentiment() {
         return this.request('/api/sentiment/current');
     }
@@ -123,5 +128,84 @@ export class ApiClient {
         return this.request(
             `/api/rebalance/history/${address}?limit=${limit}&offset=${offset}`
         );
+    }
+
+    // Wallet balance endpoints
+    static async getWalletBalances(address: string, chainId: number = 1) {
+        return this.request(`/api/wallet/balances/${address}?chainId=${chainId}`);
+    }
+
+    static async refreshWalletBalances(address: string, chainId?: number) {
+        const query = chainId ? `?chainId=${chainId}` : '';
+        return this.request(`/api/wallet/refresh/${address}${query}`, {
+            method: 'POST',
+        });
+    }
+
+    static async getSupportedTokens(chainId: number) {
+        return this.request(`/api/wallet/tokens/${chainId}`);
+    }
+
+    static async getSupportedChains() {
+        return this.request('/api/wallet/chains');
+    }
+
+    static async getTokenPrices(coingeckoIds: string[]) {
+        const idsParam = coingeckoIds.join(',');
+        return this.request(`/api/wallet/prices?ids=${idsParam}`);
+    }
+
+    // Vault endpoints
+    static async createDeposit(data: {
+        walletAddress: string;
+        assetAddress: string;
+        assetSymbol: string;
+        amount: string;
+        amountUsd?: number;
+        txHash?: string;
+    }) {
+        return this.request('/api/vault/deposits', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    static async getDepositHistory(address: string, limit = 50, offset = 0) {
+        return this.request(`/api/vault/deposits/${address}?limit=${limit}&offset=${offset}`);
+    }
+
+    static async createWithdrawal(data: {
+        walletAddress: string;
+        assetAddress: string;
+        assetSymbol: string;
+        amount: string;
+        amountUsd?: number;
+        txHash?: string;
+    }) {
+        return this.request('/api/vault/withdrawals', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    static async getWithdrawalHistory(address: string, limit = 50, offset = 0) {
+        return this.request(`/api/vault/withdrawals/${address}?limit=${limit}&offset=${offset}`);
+    }
+
+    static async recordApproval(data: {
+        walletAddress: string;
+        tokenAddress: string;
+        spenderAddress: string;
+        approvedAmount: string;
+        txHash?: string;
+    }) {
+        return this.request('/api/vault/approvals', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    static async getApprovals(address: string) {
+        return this.request(`/api/vault/approvals/${address}`);
     }
 }

@@ -4,7 +4,8 @@ import { cacheService } from './cache.service.js';
 import { logger } from '../middleware/logger.js';
 import { CacheKeys, CacheTTL } from '../utils/cache.js';
 import { newsService } from './news.service.js';
-import type { MarketSentiment, AiRecommendation, StrategyLayer } from '../types/index.js';
+import { pool } from '../config/database.js';
+import type { MarketSentiment, AiRecommendation } from '../types/index.js';
 
 export class GeminiService {
     private ai: GoogleGenAI | null = null;
@@ -106,8 +107,11 @@ export class GeminiService {
             return this.getFallbackSentiment();
         }
 
+        // Get past mistakes for feedback loop
+        const mistakes = await this.getRecentMistakes();
+        
         // Format data for Gemini prompt
-        const promptData = newsService.formatForPrompt(marketData);
+        const promptData = newsService.formatForPrompt(marketData) + '\n' + mistakes;
 
         // Retry logic with exponential backoff
         for (let attempt = 1; attempt <= this.MAX_RETRIES; attempt++) {
@@ -164,12 +168,35 @@ export class GeminiService {
         return 'Euphoric';
     }
 
+    private async getRecentMistakes(): Promise<string> {
+        try {
+            const result = await pool.query(
+                `SELECT score, label, actual_price_change_24h, recorded_at 
+                 FROM sentiment_history 
+                 WHERE is_correct = false 
+                 ORDER BY recorded_at DESC 
+                 LIMIT 3`
+            );
+
+            if (result.rows.length === 0) return '';
+
+            const mistakes = result.rows.map(row => 
+                `- Predicted ${row.label} (Score: ${row.score}) but price moved ${row.actual_price_change_24h}%`
+            ).join('\n');
+
+            return `\n5. LEARN FROM PAST MISTAKES:\nYour recent predictions were incorrect. Adjust your weighting to avoid these errors:\n${mistakes}\n`;
+        } catch (error) {
+            logger.warn('Failed to fetch recent mistakes', error);
+            return '';
+        }
+    }
+
     /**
      * Call Gemini with enhanced multi-source prompt
      */
     private async callEnhancedSentimentAPI(
         formattedData: string,
-        rawData: { fearGreedIndex: { value: number } | null; trendingCoins: string[] }
+        _rawData: { fearGreedIndex: { value: number } | null; trendingCoins: string[] }
     ): Promise<MarketSentiment> {
         if (!this.ai) throw new Error('Gemini AI not initialized');
 
@@ -177,17 +204,16 @@ export class GeminiService {
 
 ${formattedData}
 
-Based on this data, determine the overall market sentiment.
-Consider:
-1. The Fear & Greed Index value and what it indicates
-2. News headlines and their tone (positive, negative, neutral)
-3. Reddit community sentiment (upvotes indicate engagement/agreement)
-4. Trending coins and what narratives they represent
+Based on this data, perform the following analysis:
+1. List 3 key Bullish factors visible in the data.
+2. List 3 key Bearish factors visible in the data.
+3. Weigh these factors against each other to determine the final sentiment score.
 
 Return a JSON object with:
 - score: number 0-100 (0 = extreme fear/bearish, 100 = extreme greed/euphoric)
 - label: one of 'Bearish', 'Neutral', 'Bullish', 'Euphoric'
 - summary: a concise 1-2 sentence market summary
+- reasoning: a short paragraph explaining the 'why' behind the score (your chain of thought)
 - trendingTopics: array of 3-5 current trending topics/narratives
 - confidence: number 0-1 indicating your confidence in this assessment`;
 
@@ -202,6 +228,7 @@ Return a JSON object with:
                         score: { type: Type.INTEGER },
                         label: { type: Type.STRING },
                         summary: { type: Type.STRING },
+                        reasoning: { type: Type.STRING },
                         trendingTopics: { type: Type.ARRAY, items: { type: Type.STRING } },
                         confidence: { type: Type.NUMBER },
                     },

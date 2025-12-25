@@ -1,6 +1,8 @@
+/// <reference types="vite/client" />
 import React, { useState, useEffect } from 'react';
-import { useAccount, useContractRead, useContractWrite, useWaitForTransaction } from 'wagmi';
+import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseUnits } from 'viem';
+import { sepolia } from 'viem/chains';
 import StrategyTemplates from '../components/StrategyTemplates';
 import StrategyBuilder, { StrategyLayer } from '../components/StrategyBuilder';
 import { AlertCircle, CheckCircle, Loader } from 'lucide-react';
@@ -90,34 +92,28 @@ export default function StrategyPage() {
     const [customLayers, setCustomLayers] = useState<StrategyLayer[]>([]);
 
     // Read existing user layers
-    const { data: existingLayers } = useContractRead({
+    const { data: existingLayers } = useReadContract({
         address: CORE_VAULT_ADDRESS,
         abi: CORE_VAULT_ABI,
         functionName: 'getUserLayers',
         args: address ? [address, USDC_ADDRESS] : undefined,
-        enabled: !!address
+        query: {
+            enabled: !!address
+        }
     });
 
     // Apply template
-    const { write: applyTemplate, data: applyData } = useContractWrite({
-        address: STRATEGY_COMPOSER_ADDRESS,
-        abi: STRATEGY_COMPOSER_ABI,
-        functionName: 'applyTemplate'
-    });
+    const { writeContract: applyTemplate, data: applyHash } = useWriteContract();
 
-    const { isLoading: isApplying, isSuccess: isApplied } = useWaitForTransaction({
-        hash: applyData?.hash
+    const { isLoading: isApplying, isSuccess: isApplied } = useWaitForTransactionReceipt({
+        hash: applyHash
     });
 
     // Add custom layer
-    const { write: addLayer, data: addLayerData } = useContractWrite({
-        address: CORE_VAULT_ADDRESS,
-        abi: CORE_VAULT_ABI,
-        functionName: 'addStrategyLayer'
-    });
+    const { writeContract: addLayer, data: addLayerHash } = useWriteContract();
 
-    const { isLoading: isAddingLayer, isSuccess: isLayerAdded } = useWaitForTransaction({
-        hash: addLayerData?.hash
+    const { isLoading: isAddingLayer, isSuccess: isLayerAdded } = useWaitForTransactionReceipt({
+        hash: addLayerHash
     });
 
     const handleSelectTemplate = (templateId: number) => {
@@ -128,23 +124,29 @@ export default function StrategyPage() {
         } else {
             setSelectedTemplate(templateId);
             // Apply template
-            if (applyTemplate) {
-                applyTemplate({
-                    args: [USDC_ADDRESS, templateId]
-                });
-            }
+            applyTemplate({
+                account: address,
+                chain: sepolia,
+                address: STRATEGY_COMPOSER_ADDRESS,
+                abi: STRATEGY_COMPOSER_ABI,
+                functionName: 'applyTemplate',
+                args: [USDC_ADDRESS, templateId]
+            });
         }
     };
 
     const handleSaveCustomStrategy = async (layers: StrategyLayer[]) => {
-        if (!addLayer) return;
-
         // Add each layer sequentially
         for (const layer of layers) {
             const condition = CONDITION_MAP[layer.condition];
             const weight = Math.round(layer.weight * 100); // Convert to basis points
 
-            await addLayer({
+            addLayer({
+                account: address,
+                chain: sepolia,
+                address: CORE_VAULT_ADDRESS,
+                abi: CORE_VAULT_ABI,
+                functionName: 'addStrategyLayer',
                 args: [
                     USDC_ADDRESS,
                     layer.adapter as `0x${string}`,

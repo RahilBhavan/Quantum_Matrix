@@ -1,5 +1,5 @@
 import pool from '../../config/database.js';
-import type { RebalanceHistory } from '../types/index.js';
+import type { RebalanceHistory } from '../../types/index';
 
 export class RebalanceQueries {
     /**
@@ -84,11 +84,58 @@ export class RebalanceQueries {
         errorMessage?: string
     ): Promise<void> {
         const query = `
-      UPDATE rebalance_history 
-      SET status = $1, tx_hash = $2, error_message = $3 
+      UPDATE rebalance_history
+      SET status = $1, tx_hash = $2, error_message = $3
       WHERE id = $4
     `;
         await pool.query(query, [status, txHash || null, errorMessage || null, id]);
+    }
+
+    /**
+     * Update rebalance record with partial data
+     */
+    static async update(
+        id: number,
+        data: {
+            status?: 'pending' | 'success' | 'failed';
+            gasCostUsd?: number;
+            profitUsd?: number;
+            txHash?: string;
+            errorMessage?: string | null;
+        }
+    ): Promise<void> {
+        const fields: string[] = [];
+        const values: any[] = [];
+        let paramCount = 1;
+
+        if (data.status !== undefined) {
+            fields.push(`status = $${paramCount++}`);
+            values.push(data.status);
+        }
+        if (data.gasCostUsd !== undefined) {
+            fields.push(`gas_cost_usd = $${paramCount++}`);
+            values.push(data.gasCostUsd);
+        }
+        if (data.profitUsd !== undefined) {
+            fields.push(`profit_usd = $${paramCount++}`);
+            values.push(data.profitUsd);
+        }
+        if (data.txHash !== undefined) {
+            fields.push(`tx_hash = $${paramCount++}`);
+            values.push(data.txHash);
+        }
+        if (data.errorMessage !== undefined) {
+            fields.push(`error_message = $${paramCount++}`);
+            values.push(data.errorMessage);
+        }
+
+        if (fields.length === 0) {
+            return; // Nothing to update
+        }
+
+        values.push(id);
+        const query = `UPDATE rebalance_history SET ${fields.join(', ')} WHERE id = $${paramCount}`;
+        await pool.query(query, values);
     }
 
     /**

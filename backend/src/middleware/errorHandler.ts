@@ -18,17 +18,17 @@ export const errorHandler = (
     err: Error | AppError,
     req: Request,
     res: Response,
-    next: NextFunction
+    _next: NextFunction
 ) => {
     // Default to 500 server error
     let statusCode = 500;
-    let message = 'Internal server error';
-    let isOperational = false;
+    let message = 'Internal Server Error';
 
     if (err instanceof AppError) {
         statusCode = err.statusCode;
         message = err.message;
-        isOperational = err.isOperational;
+    } else if (err instanceof Error) {
+        message = err.message;
     }
 
     // Log error

@@ -1,6 +1,9 @@
 import React, { useMemo, useState } from 'react';
+import { useDroppable } from '@dnd-kit/core';
 import { Asset, PortfolioAllocation, Strategy, StrategyCondition, MarketSentiment } from '../types';
-import { Plus, X, ArrowRight, Sparkles, BrainCircuit, Layers, Zap, Scale, Wand2 } from 'lucide-react';
+import { Plus, X, ArrowRight, Sparkles, BrainCircuit, Layers, Zap, Scale, Wand2, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
+import VaultActionModal from './VaultActionModal';
+import StrategyPickerModal from './StrategyPickerModal';
 
 interface Props {
   asset: Asset;
@@ -13,7 +16,12 @@ interface Props {
   onUpdateWeight: (assetId: string, layerId: string, weight: number) => void;
   onDragStart: (e: React.DragEvent, strategyId: string) => void;
   onAutoFill: (assetId: string) => void;
+  onAddStrategy?: (assetId: string, strategyId: string) => void;
   isGlobalDragging: boolean;
+  useDndKit?: boolean; // Enable dnd-kit mode
+  // Keyboard accessibility props
+  selectedStrategyId?: string | null;
+  onKeyboardDrop?: (strategyId: string, assetId: string) => void;
 }
 
 const CONDITIONS: StrategyCondition[] = ['Always', 'AI Adaptive', 'Bullish', 'Bearish', 'Neutral', 'Euphoric', 'High Volatility'];
@@ -22,37 +30,54 @@ const CONDITIONS: StrategyCondition[] = ['Always', 'AI Adaptive', 'Bullish', 'Be
 const isAiAdaptiveActive = (strategy: Strategy, sentiment: MarketSentiment | null): boolean => {
   if (!sentiment) return false;
 
-  // Match risk levels with sentiment labels
-  // High/Degen risk → Bullish/Euphoric sentiment
-  // Medium risk → Neutral/Bullish sentiment
-  // Low risk → Bearish/Neutral sentiment
-
   const score = sentiment.score;
   const riskLevel = strategy.riskLevel;
 
   if (riskLevel === 'Degen' || riskLevel === 'High') {
-    // High risk strategies activate in bullish/euphoric markets (score >= 61)
     return score >= 61;
   } else if (riskLevel === 'Medium') {
-    // Medium risk strategies activate in neutral to bullish markets (score 41-80)
     return score >= 41 && score <= 80;
   } else if (riskLevel === 'Low') {
-    // Low risk strategies activate in bearish to neutral markets (score <= 60)
     return score <= 60;
   }
 
   return false;
 };
 
-const getBarColor = (index: number) => {
-  const colors = ['bg-defi-accent', 'bg-defi-danger', 'bg-defi-purple', 'bg-yellow-400', 'bg-black'];
-  return colors[index % colors.length];
+// Determine if any layer is active based on condition and sentiment
+const isLayerActive = (condition: StrategyCondition, strategy: Strategy, sentiment: MarketSentiment | null): boolean => {
+  if (condition === 'Always') return true;
+  if (!sentiment) return false;
+
+  const { score } = sentiment;
+  switch (condition) {
+    case 'AI Adaptive': return isAiAdaptiveActive(strategy, sentiment);
+    case 'Bullish': return score >= 61;
+    case 'Bearish': return score <= 40;
+    case 'Neutral': return score > 40 && score < 61;
+    case 'Euphoric': return score >= 81;
+    case 'High Volatility': return false; // Not supported yet
+    default: return false;
+  }
 };
 
+// Gradient colors for strategy layers
+const getLayerGradient = (index: number) => {
+  const gradients = [
+    'from-defi-accent to-defi-purple',
+    'from-defi-danger to-defi-warning',
+    'from-defi-purple to-defi-cyan',
+    'from-defi-success to-defi-cyan',
+    'from-defi-warning to-defi-accent',
+  ];
+  return gradients[index % gradients.length];
+};
+
+// Pipe connector between strategy layers
 const PipeConnector = () => (
-  <div className="h-6 w-full flex items-center justify-center -my-1 relative z-0">
-    <div className="w-1.5 h-full bg-black"></div>
-    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 bg-white border-2 border-black rounded-full shadow-sm"></div>
+  <div className="h-4 w-full flex items-center justify-center -my-0.5 relative z-0">
+    <div className="w-0.5 h-full bg-defi-border"></div>
+    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 bg-defi-accent/50 rounded-full shadow-glow-accent"></div>
   </div>
 );
 
@@ -66,7 +91,7 @@ const mulberry32 = (a: number) => {
   }
 }
 
-// Sparkline Component
+// Sparkline Component with gradient
 const Sparkline = ({ assetId }: { assetId: string }) => {
   const { points, isPositive, percentage } = useMemo(() => {
     // Generate deterministic data based on assetId
@@ -77,7 +102,7 @@ const Sparkline = ({ assetId }: { assetId: string }) => {
     const data = [];
     let val = 100;
     for (let i = 0; i < 12; i++) {
-      val = val * (1 + (rand() - 0.48) * 0.15); // Slight bias for fun
+      val = val * (1 + (rand() - 0.48) * 0.15);
       data.push(val);
     }
 
@@ -89,57 +114,71 @@ const Sparkline = ({ assetId }: { assetId: string }) => {
     const min = Math.min(...data);
     const max = Math.max(...data);
     const range = max - min || 1;
-    const width = 40; // More compact width
-    const height = 20;
+    const width = 48;
+    const height = 24;
 
     const points = data.map((d, i) => {
       const x = (i / (data.length - 1)) * width;
-      const y = height - ((d - min) / range) * height; // Invert Y
+      const y = height - ((d - min) / range) * height;
       return `${x},${y}`;
     }).join(' ');
 
     return { points, isPositive, percentage };
   }, [assetId]);
 
-  const color = isPositive ? '#16a34a' : '#D94545';
+  const gradientId = `sparkline-${assetId}`;
+  const color = isPositive ? '#10b981' : '#ef4444';
 
   return (
-    <div className="flex items-center gap-1.5">
-      <svg width="40" height="20" viewBox="0 0 40 20" className="overflow-visible opacity-80">
-        <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        <circle cx="40" cy={points.split(' ').pop()?.split(',')[1]} r="1.5" fill={color} />
+    <div className="flex items-center gap-2">
+      <svg width="48" height="24" viewBox="0 0 48 24" className="overflow-visible">
+        <defs>
+          <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor={color} stopOpacity="0.2" />
+            <stop offset="100%" stopColor={color} stopOpacity="1" />
+          </linearGradient>
+        </defs>
+        <polyline
+          points={points}
+          fill="none"
+          stroke={`url(#${gradientId})`}
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <circle cx="48" cy={points.split(' ').pop()?.split(',')[1]} r="2.5" fill={color} className="animate-pulse" />
       </svg>
-      <span className={`text-[9px] font-bold font-mono ${isPositive ? 'text-defi-success' : 'text-defi-danger'}`}>
+      <span className={`text-xs font-semibold font-mono tabular-nums ${isPositive ? 'text-defi-success' : 'text-defi-danger'}`}>
         {isPositive ? '+' : ''}{percentage.toFixed(1)}%
       </span>
     </div>
   );
 };
 
-// Circular Gauge Component
+// Circular Gauge Component with glow effect
 const CircularGauge = ({ value, maxValue = 20 }: { value: number; maxValue?: number }) => {
   const percentage = Math.min((value / maxValue) * 100, 100);
-  const radius = 28;
-  const strokeWidth = 6;
+  const radius = 32;
+  const strokeWidth = 5;
   const normalizedRadius = radius - strokeWidth / 2;
   const circumference = normalizedRadius * 2 * Math.PI;
   const strokeDashoffset = circumference - (percentage / 100) * circumference;
 
-  // Dynamic color based on yield level
+  // Dynamic color and glow based on yield level
   const getColor = () => {
-    if (value >= 15) return '#16a34a'; // High yield - green
-    if (value >= 8) return '#eab308'; // Medium yield - yellow
-    return '#6b7280'; // Low yield - gray
+    if (value >= 15) return { color: '#10b981', glow: 'shadow-glow-success' };
+    if (value >= 8) return { color: '#f59e0b', glow: '' };
+    return { color: '#64748b', glow: '' };
   };
 
-  const color = getColor();
+  const { color, glow } = getColor();
 
   return (
-    <div className="relative w-16 h-16 flex items-center justify-center">
+    <div className={`relative w-16 h-16 flex items-center justify-center ${glow}`}>
       <svg height={radius * 2} width={radius * 2} className="transform -rotate-90">
         {/* Background circle */}
         <circle
-          stroke="#e5e7eb"
+          stroke="rgba(255, 255, 255, 0.08)"
           fill="transparent"
           strokeWidth={strokeWidth}
           r={normalizedRadius}
@@ -154,7 +193,8 @@ const CircularGauge = ({ value, maxValue = 20 }: { value: number; maxValue?: num
           strokeDasharray={circumference + ' ' + circumference}
           style={{
             strokeDashoffset,
-            transition: 'stroke-dashoffset 0.5s ease, stroke 0.3s ease'
+            transition: 'stroke-dashoffset 0.5s ease, stroke 0.3s ease',
+            filter: value >= 15 ? 'drop-shadow(0 0 6px rgba(16, 185, 129, 0.5))' : 'none'
           }}
           strokeLinecap="round"
           r={normalizedRadius}
@@ -164,10 +204,10 @@ const CircularGauge = ({ value, maxValue = 20 }: { value: number; maxValue?: num
       </svg>
       {/* Center text */}
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="font-mono font-bold text-sm leading-none tabular-nums" style={{ color }}>
+        <span className="font-mono font-bold text-base leading-none tabular-nums" style={{ color }}>
           {value.toFixed(1)}
         </span>
-        <span className="text-[8px] font-bold text-gray-400 leading-none mt-0.5">%</span>
+        <span className="text-[9px] font-medium text-defi-text-muted leading-none mt-0.5">%</span>
       </div>
     </div>
   );
@@ -175,10 +215,30 @@ const CircularGauge = ({ value, maxValue = 20 }: { value: number; maxValue?: num
 
 const AssetTile: React.FC<Props> = ({
   asset, allocation, strategies, currentSentiment,
-  onDrop, onRemoveLayer, onUpdateCondition, onUpdateWeight, onDragStart, onAutoFill, isGlobalDragging
+  onDrop, onRemoveLayer, onUpdateCondition, onUpdateWeight, onDragStart, onAutoFill, onAddStrategy,
+  isGlobalDragging,
+  useDndKit = true,
+  selectedStrategyId,
+  onKeyboardDrop,
 }) => {
   const [isOver, setIsOver] = useState(false);
   const [hoveredLayerId, setHoveredLayerId] = useState<string | null>(null);
+  const [showVaultModal, setShowVaultModal] = useState(false);
+  const [vaultAction, setVaultAction] = useState<'deposit' | 'withdraw'>('deposit');
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
+
+  // dnd-kit droppable
+  const { setNodeRef, isOver: isDndKitOver } = useDroppable({
+    id: asset.id,
+    data: {
+      type: 'asset',
+      assetId: asset.id,
+      asset,
+    },
+  });
+
+  // Use dnd-kit isOver or HTML5 isOver based on mode
+  const isActiveOver = useDndKit ? isDndKitOver : isOver;
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -205,7 +265,13 @@ const AssetTile: React.FC<Props> = ({
     allocation.layers.forEach(layer => {
       const strategy = strategies.find(s => s.id === layer.strategyId);
       if (!strategy) return;
-      weightedYieldSum += strategy.apy * (layer.weight / 100);
+
+      const isActive = isLayerActive(layer.condition, strategy, currentSentiment);
+
+      if (isActive) {
+        weightedYieldSum += strategy.apy * (layer.weight / 100);
+      }
+
       weightSum += layer.weight;
       count++;
     });
@@ -216,86 +282,117 @@ const AssetTile: React.FC<Props> = ({
 
   return (
     <div
+      ref={useDndKit ? setNodeRef : undefined}
+      tabIndex={selectedStrategyId ? 0 : -1}
+      role="button"
+      aria-label={`${asset.symbol} asset tile. ${selectedStrategyId ? 'Press Enter to drop selected strategy here.' : ''}`}
+      aria-dropeffect={selectedStrategyId ? 'move' : 'none'}
+      onKeyDown={(e) => {
+        if ((e.key === 'Enter' || e.key === ' ') && selectedStrategyId && onKeyboardDrop) {
+          e.preventDefault();
+          onKeyboardDrop(selectedStrategyId, asset.id);
+        }
+      }}
       className={`
-        relative flex flex-col bg-white border-2 border-black h-[480px] w-full transition-shadow duration-300
-        ${isOver ? 'shadow-brutal-hover ring-2 ring-defi-accent ring-inset' : 'shadow-brutal'}
+        relative flex flex-col rounded-2xl h-[480px] w-full transition-all duration-300
+        bg-gradient-to-b from-white/[0.04] to-white/[0.01] backdrop-blur-xl
+        border border-white/[0.08] hover:border-white/[0.15]
+        shadow-xl shadow-black/20 hover:shadow-2xl hover:shadow-black/30
+        hover:-translate-y-1
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-defi-accent focus-visible:ring-offset-2 focus-visible:ring-offset-defi-bg
+        ${isActiveOver ? 'ring-2 ring-defi-accent shadow-glow-accent border-defi-accent/50 scale-[1.02]' : ''}
+        ${selectedStrategyId ? 'cursor-pointer hover:ring-1 hover:ring-defi-purple/50' : ''}
       `}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
+      {...(!useDndKit ? {
+        onDragOver: handleDragOver,
+        onDragLeave: handleDragLeave,
+        onDrop: handleDrop,
+      } : {})}
     >
       {/* Header Section */}
-      <div className="p-4 border-b-2 border-black flex items-start justify-between bg-white relative z-10">
+      <div className="p-5 border-b border-defi-border/60 flex items-start justify-between relative z-10 bg-gradient-to-b from-white/[0.02] to-transparent">
         <div className="flex items-start gap-4">
-          {/* Square Logo Box */}
-          <div className="w-16 h-16 border-2 border-black p-2 flex items-center justify-center bg-white shadow-[2px_2px_0px_0px_rgba(0,0,0,0.1)]">
-            <img src={asset.icon} alt={asset.symbol} className="w-full h-full object-contain" onError={(e) => (e.currentTarget.style.display = 'none')} />
+          {/* Circular Logo with animated gradient ring */}
+          <div className="relative group/icon">
+            {/* Animated glow ring */}
+            <div className="absolute -inset-1 bg-gradient-to-r from-defi-accent via-defi-purple to-defi-cyan rounded-xl opacity-40 blur-md group-hover/icon:opacity-70 transition-all duration-500 animate-pulse" />
+            <div className="relative w-14 h-14 rounded-xl bg-gradient-to-br from-defi-card via-defi-bg-secondary to-defi-card border border-white/10 p-2 flex items-center justify-center shadow-glass-lg backdrop-blur-sm">
+              <img src={asset.icon} alt={asset.symbol} className="w-full h-full object-contain drop-shadow-lg" onError={(e) => (e.currentTarget.style.display = 'none')} />
+            </div>
           </div>
           <div className="flex flex-col pt-1">
-            <h3 className="font-display text-4xl font-bold leading-none uppercase">{asset.symbol}</h3>
-            <p className="text-xs font-bold uppercase tracking-widest text-gray-400">{asset.name}</p>
+            <h3 className="font-display text-3xl font-bold leading-none text-defi-text tracking-tight">{asset.symbol}</h3>
+            <p className="text-xs font-medium text-defi-text-muted mt-1">{asset.name}</p>
           </div>
         </div>
 
         <div className="text-right flex flex-col items-end pt-1">
           {/* Total Balance */}
-          <div className="text-2xl font-mono font-bold tabular-nums text-black leading-none mb-2">
+          <div className="text-2xl font-mono font-bold tabular-nums text-defi-text leading-none mb-2">
             ${asset.balance.toLocaleString()}
           </div>
 
-          {/* Price + Sparkline Pill */}
-          <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 px-2 py-1 rounded-sm">
-            <span className="text-xs font-bold font-mono text-gray-500 tabular-nums">${asset.price.toLocaleString()}</span>
-            <div className="h-3 w-px bg-gray-300"></div>
+          {/* Price + Sparkline */}
+          <div className="flex items-center gap-3 bg-defi-card/50 border border-defi-border px-3 py-1.5 rounded-lg">
+            <span className="text-xs font-medium font-mono text-defi-text-secondary tabular-nums">${asset.price.toLocaleString()}</span>
+            <div className="h-4 w-px bg-defi-border"></div>
             <Sparkline assetId={asset.id} />
           </div>
         </div>
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 overflow-hidden relative bg-grid-pattern p-4 flex flex-col">
+      <div className="flex-1 overflow-hidden relative p-4 flex flex-col">
 
         {allocation && allocation.layers.length > 0 ? (
           <div className="overflow-y-auto custom-scrollbar h-full pr-1 pb-12">
-            <div className="flex items-center gap-2 mb-3">
-              <Layers className="w-4 h-4 text-gray-500" />
-              <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Active Stack</span>
+            <div className="flex items-center justify-between mb-3 pr-2">
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-defi-text-muted" />
+                <span className="text-xs font-medium text-defi-text-secondary">Active Stack</span>
+              </div>
+              <button
+                onClick={() => setIsPickerOpen(true)}
+                className="text-xs font-medium flex items-center gap-1 text-defi-accent-light hover:text-defi-accent transition-colors"
+              >
+                <Plus className="w-3 h-3" /> Add Strategy
+              </button>
             </div>
 
             {allocation.layers.map((layer, index) => {
               const strategy = strategies.find(s => s.id === layer.strategyId);
               if (!strategy) return null;
 
-              // Check if this is an AI Adaptive strategy and if it's currently active
+              // Check if this layer is currently active based on condition and sentiment
               const isAdaptive = layer.condition === 'AI Adaptive';
-              const isActive = isAdaptive ? isAiAdaptiveActive(strategy, currentSentiment) : true;
+              const isActive = isLayerActive(layer.condition, strategy, currentSentiment);
 
               return (
                 <div
                   key={layer.id}
-                  className={`relative mb-2 group transition-opacity duration-300 ${!isActive ? 'opacity-50' : 'opacity-100'}`}
+                  className={`relative mb-2 group transition-all duration-300 animate-fade-in ${!isActive ? 'opacity-50 grayscale-[30%]' : 'opacity-100'}`}
                   onMouseEnter={() => setHoveredLayerId(layer.id)}
                   onMouseLeave={() => setHoveredLayerId(null)}
                 >
-                  <div className="border-2 border-black bg-white p-3 shadow-sm relative z-10 flex flex-col gap-2">
-                    {/* Color Strip */}
-                    <div className={`absolute left-0 top-0 bottom-0 w-1.5 ${getBarColor(index)} border-r-2 border-black`} />
+                  <div className={`bg-white/[0.03] border rounded-xl p-3 relative z-10 flex flex-col gap-2 transition-all duration-200 ${hoveredLayerId === layer.id ? 'border-white/20 bg-white/[0.05] shadow-lg' : 'border-white/[0.08]'}`}>
+                    {/* Gradient accent strip */}
+                    <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl bg-gradient-to-b ${getLayerGradient(index)} ${hoveredLayerId === layer.id ? 'opacity-100' : 'opacity-70'}`} />
 
                     <div className="pl-3 flex justify-between items-center">
                       <div className="flex items-center gap-2 flex-1 min-w-0">
-                        <span className="text-sm font-bold uppercase truncate">{strategy.name}</span>
+                        <span className="text-sm font-semibold text-defi-text truncate">{strategy.name}</span>
                         {/* AI Adaptive Status Indicator */}
                         {isAdaptive && (
                           <div
-                            className={`flex items-center gap-1 px-1.5 py-0.5 border ${isActive ? 'bg-defi-success/10 border-defi-success text-defi-success' : 'bg-gray-100 border-gray-300 text-gray-400'}`}
+                            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${isActive ? 'bg-defi-success/20 text-defi-success-light' : 'bg-defi-card text-defi-text-muted'}`}
                             title={isActive ? 'AI: Active - Risk matches sentiment' : 'AI: Inactive - Waiting for alignment'}
                           >
                             <BrainCircuit className="w-3 h-3" />
-                            <span className="text-[9px] font-bold uppercase">{isActive ? 'ON' : 'OFF'}</span>
+                            <span>{isActive ? 'ON' : 'OFF'}</span>
                           </div>
                         )}
                       </div>
-                      <button onClick={(e) => { e.stopPropagation(); onRemoveLayer(asset.id, layer.id) }} className="text-gray-400 hover:text-red-500 ml-2">
+                      <button onClick={(e) => { e.stopPropagation(); onRemoveLayer(asset.id, layer.id) }} className="text-defi-text-muted hover:text-defi-danger transition-colors ml-2">
                         <X className="w-4 h-4" />
                       </button>
                     </div>
@@ -303,18 +400,18 @@ const AssetTile: React.FC<Props> = ({
                     {/* AI Adaptive Info Banner */}
                     {isAdaptive && hoveredLayerId === layer.id && (
                       <div className="pl-3 pr-2 pb-1">
-                        <div className="bg-gray-50 border border-gray-200 p-2 text-[10px] leading-relaxed">
+                        <div className="glass rounded-lg p-2.5 text-[10px] leading-relaxed">
                           <div className="flex items-start gap-1.5">
-                            <Sparkles className="w-3 h-3 text-defi-purple mt-0.5 shrink-0" />
+                            <Sparkles className="w-3 h-3 text-defi-purple-light mt-0.5 shrink-0" />
                             <div>
-                              <span className="font-bold text-gray-700">AI Adaptive Mode:</span>
-                              <span className="text-gray-600"> This strategy activates when </span>
-                              <span className="font-bold text-black">{strategy.riskLevel}</span>
-                              <span className="text-gray-600"> risk aligns with market sentiment.</span>
+                              <span className="font-semibold text-defi-text">AI Adaptive Mode:</span>
+                              <span className="text-defi-text-secondary"> This strategy activates when </span>
+                              <span className="font-semibold text-defi-accent-light">{strategy.riskLevel}</span>
+                              <span className="text-defi-text-secondary"> risk aligns with market sentiment.</span>
                               {currentSentiment && (
-                                <div className="mt-1 text-gray-500">
-                                  Current: <span className="font-bold">{currentSentiment.label}</span> ({currentSentiment.score}/100) →
-                                  <span className={`font-bold ml-1 ${isActive ? 'text-defi-success' : 'text-gray-400'}`}>
+                                <div className="mt-1.5 text-defi-text-muted">
+                                  Current: <span className="font-semibold text-defi-text">{currentSentiment.label}</span> ({currentSentiment.score}/100) →
+                                  <span className={`font-semibold ml-1 ${isActive ? 'text-defi-success' : 'text-defi-text-muted'}`}>
                                     {isActive ? '✓ Match' : '✗ No Match'}
                                   </span>
                                 </div>
@@ -327,14 +424,14 @@ const AssetTile: React.FC<Props> = ({
 
                     <div className="pl-3 flex items-center justify-between gap-2">
                       {/* Condition Selector */}
-                      <div className={`flex items-center gap-1 border px-1.5 py-0.5 ${isAdaptive ? 'bg-defi-purple/5 border-defi-purple' : 'bg-gray-100 border-black'}`}>
-                        <span className="text-[10px] font-bold">IF</span>
+                      <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${isAdaptive ? 'bg-defi-purple/10 border border-defi-purple/30' : 'bg-defi-card border border-defi-border'}`}>
+                        <span className="text-[10px] font-semibold text-defi-text-muted">IF</span>
                         <select
                           value={layer.condition}
                           onChange={(e) => onUpdateCondition(asset.id, layer.id, e.target.value as StrategyCondition)}
-                          className="bg-transparent text-[10px] font-bold uppercase focus:outline-none cursor-pointer"
+                          className="bg-transparent text-[10px] font-semibold text-defi-text focus:outline-none cursor-pointer"
                         >
-                          {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                          {CONDITIONS.map(c => <option key={c} value={c} className="bg-defi-bg-secondary text-defi-text">{c}</option>)}
                         </select>
                       </div>
 
@@ -343,9 +440,9 @@ const AssetTile: React.FC<Props> = ({
                         <input
                           type="range" min="0" max="100" value={layer.weight}
                           onChange={(e) => onUpdateWeight(asset.id, layer.id, parseInt(e.target.value))}
-                          className="w-16 h-1 bg-gray-200 rounded-none appearance-none cursor-pointer accent-black"
+                          className="w-16 h-1 bg-defi-border rounded-full appearance-none cursor-pointer accent-defi-accent"
                         />
-                        <span className="text-[10px] font-mono font-bold w-6 text-right">{Math.round(layer.weight)}%</span>
+                        <span className="text-[10px] font-mono font-semibold w-8 text-right text-defi-text">{Math.round(layer.weight)}%</span>
                       </div>
                     </div>
                   </div>
@@ -356,53 +453,117 @@ const AssetTile: React.FC<Props> = ({
             })}
           </div>
         ) : (
-          <div className="h-full flex flex-col items-center justify-center text-center opacity-40 hover:opacity-60 transition-opacity border-2 border-dashed border-gray-300 rounded-lg bg-white/50 relative">
-            {/* Stacking Illustration */}
-            <div className="mb-6 relative">
-              <img
-                src="/stacking-illustration.png"
-                alt="Stack strategies"
-                className="w-32 h-32 object-contain opacity-50 pointer-events-none select-none"
-              />
+          <div className={`h-full flex flex-col items-center justify-center text-center p-6 m-2 relative rounded-xl overflow-hidden transition-all duration-300 ${isActiveOver ? 'bg-defi-accent/5' : 'bg-white/[0.02]'}`}>
+            {/* Animated dashed border */}
+            <div className={`absolute inset-0 rounded-xl border-2 border-dashed transition-all duration-300 ${isActiveOver ? 'border-defi-accent animate-pulse' : 'border-defi-border/50'}`}
+              style={{
+                backgroundImage: isActiveOver ? 'linear-gradient(135deg, transparent 0%, rgba(97, 218, 251, 0.03) 50%, transparent 100%)' : 'none'
+              }}
+            />
+            {/* Floating glow effect during drag */}
+            {isActiveOver && (
+              <div className="absolute inset-0 bg-gradient-to-br from-defi-accent/10 via-transparent to-defi-purple/10 animate-pulse" />
+            )}
+            {/* Empty state illustration with enhanced visuals */}
+            <div className="mb-5 relative">
+              {/* Outer glow ring */}
+              <div className={`absolute -inset-4 rounded-3xl blur-xl transition-all duration-500 ${isActiveOver ? 'bg-defi-accent/20' : 'bg-defi-purple/10'}`} />
+              <div className={`relative w-20 h-20 rounded-2xl bg-gradient-to-br from-defi-accent/20 via-defi-purple/15 to-defi-cyan/10 border transition-all duration-300 flex items-center justify-center ${isActiveOver ? 'border-defi-accent/50 scale-110' : 'border-white/10'}`}>
+                <Layers className={`w-9 h-9 transition-all duration-300 ${isActiveOver ? 'text-defi-accent' : 'text-defi-text-muted/60'}`} />
+              </div>
             </div>
-            <span className="text-sm font-bold uppercase text-gray-400 tracking-widest mb-4">Drag Strategy Block</span>
+            <span className={`text-sm font-medium mb-1 transition-colors duration-300 ${isActiveOver ? 'text-defi-accent' : 'text-defi-text-secondary'}`}>Drag a strategy block here</span>
+            <span className="text-xs text-defi-text-muted mb-5">or use Quick Fill to auto-configure</span>
 
             <button
               onClick={() => onAutoFill(asset.id)}
-              className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-300 shadow-sm text-xs font-bold text-gray-500 hover:text-black hover:border-black hover:shadow-brutal-sm transition-all uppercase"
+              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-defi-accent/10 to-defi-purple/10 border border-defi-accent/30 rounded-xl text-xs font-semibold text-defi-accent-light hover:text-white hover:from-defi-accent hover:to-defi-purple hover:border-transparent transition-all duration-300 shadow-sm hover:shadow-glow-accent"
             >
-              <Wand2 className="w-3 h-3" /> Quick Fill
+              <Wand2 className="w-3.5 h-3.5" /> Quick Fill
             </button>
           </div>
         )}
       </div>
 
       {/* Footer */}
-      <div className="bg-white border-t-2 border-black p-4 shrink-0 flex items-center gap-4">
-        <CircularGauge value={activeYield} maxValue={20} />
-        <div className="flex flex-col">
-          <span className="text-[10px] font-bold uppercase text-gray-400 tracking-widest leading-none mb-1">Est. Yield</span>
-          <div className="flex items-baseline gap-1">
-            <span className="font-mono font-bold text-xl leading-none tabular-nums">
-              {activeYield.toFixed(2)}%
-            </span>
-            <span className="text-[9px] font-bold text-gray-400 uppercase">APY</span>
-          </div>
-          {totalAllocatedWeight > 0 && (
-            <div className="mt-1 flex items-center gap-1">
-              <div className="h-1 w-16 bg-gray-200 border border-gray-300 overflow-hidden">
-                <div
-                  className="h-full bg-black transition-all duration-300"
-                  style={{ width: `${Math.min(totalAllocatedWeight, 100)}%` }}
-                />
-              </div>
-              <span className="text-[8px] font-mono font-bold text-gray-500">
-                {Math.round(totalAllocatedWeight)}%
+      <div className="border-t border-defi-border/60 p-4 shrink-0 bg-gradient-to-t from-white/[0.02] to-transparent">
+        <div className="flex items-center gap-4 mb-4">
+          <CircularGauge value={activeYield} maxValue={20} />
+          <div className="flex flex-col flex-1">
+            <span className="text-[10px] font-semibold text-defi-text-muted tracking-widest uppercase leading-none mb-1.5">Est. Yield</span>
+            <div className="flex items-baseline gap-1.5">
+              <span className={`font-mono font-bold text-xl leading-none tabular-nums ${activeYield >= 15 ? 'text-defi-success' : activeYield >= 8 ? 'text-defi-warning' : 'text-defi-text'}`}>
+                {activeYield.toFixed(2)}%
               </span>
+              <span className="text-[9px] font-medium text-defi-text-muted">APY</span>
             </div>
-          )}
+            {totalAllocatedWeight > 0 && (
+              <div className="mt-2.5 flex items-center gap-2">
+                <div className="h-2 flex-1 bg-defi-bg-secondary rounded-full overflow-hidden border border-white/5">
+                  <div
+                    className="h-full bg-gradient-to-r from-defi-accent via-defi-purple to-defi-cyan transition-all duration-700 ease-out rounded-full relative"
+                    style={{ width: `${Math.min(totalAllocatedWeight, 100)}%` }}
+                  >
+                    {/* Animated shimmer effect */}
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer" />
+                  </div>
+                </div>
+                <span className="text-[11px] font-mono font-semibold text-defi-text-secondary min-w-[32px] text-right">
+                  {Math.round(totalAllocatedWeight)}%
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Vault Actions */}
+        <div className="flex gap-3">
+          <button
+            onClick={() => {
+              setVaultAction('deposit');
+              setShowVaultModal(true);
+            }}
+            className="flex-1 px-4 py-3 rounded-xl bg-gradient-to-r from-defi-accent to-defi-purple text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-lg shadow-defi-accent/20 hover:shadow-xl hover:shadow-defi-accent/30 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
+          >
+            <ArrowDownToLine className="w-4 h-4" />
+            Deposit
+          </button>
+          <button
+            onClick={() => {
+              setVaultAction('withdraw');
+              setShowVaultModal(true);
+            }}
+            className="flex-1 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-defi-text font-semibold text-sm flex items-center justify-center gap-2 hover:bg-white/10 hover:border-white/20 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
+          >
+            <ArrowUpFromLine className="w-4 h-4" />
+            Withdraw
+          </button>
         </div>
       </div>
+
+      {/* Vault Modal */}
+      <VaultActionModal
+        isOpen={showVaultModal}
+        onClose={() => setShowVaultModal(false)}
+        action={vaultAction}
+        asset={asset}
+        onSuccess={() => {
+          // Optionally refresh balances or show success message
+          console.log('Vault transaction successful');
+        }}
+      />
+
+      {/* Strategy Picker Modal */}
+      <StrategyPickerModal
+        isOpen={isPickerOpen}
+        onClose={() => setIsPickerOpen(false)}
+        strategies={strategies}
+        currentSentiment={currentSentiment}
+        onSelect={(strategy) => {
+          if (onAddStrategy) onAddStrategy(asset.id, strategy.id);
+        }}
+        remainingWeight={Math.max(0, 100 - totalAllocatedWeight)}
+      />
     </div>
   );
 };

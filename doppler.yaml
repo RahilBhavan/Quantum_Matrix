@@ -1,0 +1,3 @@
+setup:
+  project: quantum_matrix
+  config: prd

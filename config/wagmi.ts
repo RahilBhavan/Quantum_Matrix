@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { http, createConfig } from 'wagmi';
 import { mainnet, sepolia, arbitrum } from 'wagmi/chains';
 import { injected, walletConnect } from 'wagmi/connectors';

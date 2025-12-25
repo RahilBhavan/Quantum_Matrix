@@ -1,5 +1,5 @@
 import pool from '../../config/database.js';
-import type { UserAllocation, StrategyLayer } from '../types/index.js';
+import type { UserAllocation, StrategyLayer } from '../../types/index';
 
 export class AllocationQueries {
     /**
@@ -34,6 +34,15 @@ export class AllocationQueries {
         ]);
 
         return this.mapRow(result.rows[0]);
+    }
+
+    /**
+     * Find all allocations
+     */
+    static async findAll(): Promise<UserAllocation[]> {
+        const query = `SELECT * FROM allocations ORDER BY created_at DESC`;
+        const result = await pool.query(query);
+        return result.rows.map(this.mapRow);
     }
 
     /**

@@ -11,6 +11,8 @@ import userRoutes from './routes/users.routes.js';
 import allocationRoutes from './routes/allocations.routes.js';
 import rebalanceRoutes from './routes/rebalance.routes.js';
 import sentimentRoutes from './routes/sentiment.routes.js';
+import walletRoutes from './routes/wallet.routes.js';
+import vaultRoutes from './routes/vault.routes.js';
 
 const app = express();
 
@@ -68,7 +70,7 @@ app.use(requestLogger);
 app.use('/api/', apiLimiter);
 
 // Health check
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
     res.json({
         status: 'ok',
         timestamp: new Date().toISOString(),
@@ -81,6 +83,8 @@ app.use('/api/users', userRoutes);
 app.use('/api/allocations', allocationRoutes);
 app.use('/api/rebalance', rebalanceRoutes);
 app.use('/api/sentiment', sentimentRoutes);
+app.use('/api/wallet', walletRoutes);
+app.use('/api/vault', vaultRoutes);
 
 // 404 handler
 app.use((req, res) => {

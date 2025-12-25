@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { UserQueries } from '../db/queries/users.js';
 import { AllocationQueries } from '../db/queries/allocations.js';
@@ -8,13 +8,15 @@ import { CacheKeys, CacheTTL } from '../utils/cache.js';
 
 const router = Router();
 
+import { rebalanceService } from '../services/rebalance.service.js';
+
 /**
  * POST /api/rebalance/simulate
  * Simulate a rebalance without executing
  */
 router.post(
     '/simulate',
-    asyncHandler(async (req, res) => {
+    asyncHandler(async (req: Request, res: Response) => {
         const { walletAddress, allocationId, currentSentiment } = req.body;
 
         if (!walletAddress || !allocationId || !currentSentiment) {
@@ -34,30 +36,17 @@ router.post(
         }
 
         // Determine which strategies should execute based on sentiment
-        const activeStrategies = allocation.strategyLayers
-            .filter((layer) => {
-                switch (layer.condition) {
-                    case 'Always':
-                        return true;
-                    case 'Bullish':
-                        return currentSentiment.score >= 61;
-                    case 'Bearish':
-                        return currentSentiment.score <= 40;
-                    case 'Neutral':
-                        return currentSentiment.score > 40 && currentSentiment.score < 61;
-                    case 'Euphoric':
-                        return currentSentiment.score >= 81;
-                    default:
-                        return false;
-                }
-            })
-            .map((layer) => layer.strategyId);
+        // Use shared service logic for consistency
+        const activeStrategies = rebalanceService.evaluateStrategies(
+            allocation.strategyLayers,
+            currentSentiment
+        );
 
         // Simulate gas cost and profit (placeholder logic)
         const estimatedGasCost = 3.5;
-        const estimatedProfit = 125.0;
+        const estimatedProfit = 125.0; // In real app, calculate based on strategy specs
 
-        res.json({
+        return res.json({
             success: true,
             data: {
                 activeStrategies,
@@ -78,7 +67,7 @@ router.post(
  */
 router.get(
     '/history/:address',
-    asyncHandler(async (req, res) => {
+    asyncHandler(async (req: Request, res: Response) => {
         const { address } = req.params;
         const limit = parseInt(req.query.limit as string) || 50;
         const offset = parseInt(req.query.offset as string) || 0;
@@ -116,7 +105,7 @@ router.get(
         // Cache result
         await cacheService.set(cacheKey, result, CacheTTL.rebalanceHistory);
 
-        res.json({
+        return res.json({
             success: true,
             data: result,
         });

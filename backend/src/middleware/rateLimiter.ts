@@ -11,7 +11,7 @@ export const apiLimiter = rateLimit({
     },
     standardHeaders: true,
     legacyHeaders: false,
-    handler: (req, res) => {
+    handler: (_req, res) => {
         res.status(429).json({
             success: false,
             error: 'Rate limit exceeded',
@@ -32,7 +32,7 @@ export const aiLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     skipSuccessfulRequests: false,
-    handler: (req, res) => {
+    handler: (_req, res) => {
         res.status(429).json({
             success: false,
             error: 'AI rate limit exceeded',

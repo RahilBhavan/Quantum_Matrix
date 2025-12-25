@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { writeLimiter } from '../middleware/rateLimiter.js';
 import { UserQueries } from '../db/queries/users.js';
@@ -15,7 +15,7 @@ const router = Router();
 router.post(
     '/',
     writeLimiter,
-    asyncHandler(async (req, res) => {
+    asyncHandler(async (req: Request, res: Response) => {
         const { walletAddress, ecosystem, assetId, assetSymbol, amount, strategyLayers } =
             req.body;
 
@@ -46,7 +46,7 @@ router.post(
         // Invalidate cache
         await cacheService.delete(CacheKeys.userAllocations(walletAddress));
 
-        res.status(201).json({
+        return res.status(201).json({
             success: true,
             data: allocation,
         });
@@ -59,7 +59,7 @@ router.post(
  */
 router.get(
     '/:address',
-    asyncHandler(async (req, res) => {
+    asyncHandler(async (req: Request, res: Response) => {
         const { address } = req.params;
         const { ecosystem } = req.query;
 
@@ -97,7 +97,7 @@ router.get(
         // Cache result
         await cacheService.set(cacheKey, result, CacheTTL.userAllocations);
 
-        res.json({
+        return res.json({
             success: true,
             data: result,
         });
@@ -111,7 +111,7 @@ router.get(
 router.delete(
     '/:address/:assetId',
     writeLimiter,
-    asyncHandler(async (req, res) => {
+    asyncHandler(async (req: Request, res: Response) => {
         const { address, assetId } = req.params;
 
         const user = await UserQueries.findByAddress(address);
@@ -134,7 +134,7 @@ router.delete(
         // Invalidate cache
         await cacheService.delete(CacheKeys.userAllocations(address));
 
-        res.json({
+        return res.json({
             success: true,
             message: 'Allocation deleted successfully',
         });

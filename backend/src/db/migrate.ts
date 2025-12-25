@@ -1,6 +1,6 @@
 import pool from '../config/database.js';
 import { logger } from '../middleware/logger.js';
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
@@ -11,14 +11,19 @@ async function runMigrations() {
     try {
         logger.info('🔄 Running database migrations...');
 
-        // Read migration file
-        const migrationPath = join(__dirname, './migrations/001_initial_schema.sql');
-        const migrationSQL = readFileSync(migrationPath, 'utf-8');
+        const migrationsDir = join(__dirname, './migrations');
+        const files = readdirSync(migrationsDir)
+            .filter(file => file.endsWith('.sql'))
+            .sort(); // Ensure 001 runs before 002
 
-        // Execute migration
-        await pool.query(migrationSQL);
+        for (const file of files) {
+            logger.info(`Running migration: ${file}`);
+            const migrationPath = join(migrationsDir, file);
+            const migrationSQL = readFileSync(migrationPath, 'utf-8');
+            await pool.query(migrationSQL);
+        }
 
-        logger.info('✅ Migrations completed successfully!');
+        logger.info('✅ All migrations completed successfully!');
         process.exit(0);
     } catch (error) {
         logger.error('❌ Migration failed:', error);

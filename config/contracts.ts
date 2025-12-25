@@ -4,14 +4,25 @@ import MockUSDCABI from './abi/MockUSDC.json';
 
 export const CONTRACTS = {
     sepolia: {
-        CoreVault: '', // Will be updated after deployment
-        MockYieldAdapter: '',
-        MockUSDC: '',
+        CoreVault: '0xEa454f612DCA53492301222e25dd1B2c4CD3c0c0',
+        MockYieldAdapter: '0x05251018325f1c998D23Dc1f7f7eD609A948D9A9',
+        MockUSDC: '0x08009c047eA5a848997885d69E0352faab9B5Ee3',
+        AaveV3Adapter: '0x05251018325f1c998D23Dc1f7f7eD609A948D9A9', // Placeholder (Mock)
+        UniswapV3Adapter: '0x05251018325f1c998D23Dc1f7f7eD609A948D9A9', // Placeholder (Mock)
     },
     mainnet: {
         CoreVault: '', // Not deployed yet
     }
 } as const;
+
+export const STRATEGY_MAP: Record<string, string> = {
+    'strat-mean-reversion': CONTRACTS.sepolia.MockYieldAdapter,
+    'strat-delta-gamma': CONTRACTS.sepolia.MockYieldAdapter,
+    'strat-momentum-alpha': CONTRACTS.sepolia.MockYieldAdapter,
+    'strat-liquid-loop': CONTRACTS.sepolia.AaveV3Adapter,
+    'strat-basis-arb': CONTRACTS.sepolia.MockYieldAdapter,
+    'strat-degen-farm': CONTRACTS.sepolia.UniswapV3Adapter,
+};
 
 export const ABIS = {
     CoreVault: CoreVaultABI,
