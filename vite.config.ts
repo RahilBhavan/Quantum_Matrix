@@ -22,29 +22,19 @@ export default defineConfig(({ mode }) => {
     build: {
       rollupOptions: {
         output: {
-          // Use function-based chunking to ensure proper dependency ordering
+          // Only separate truly independent libs, let Vite handle React ecosystem
           manualChunks(id) {
             if (id.includes('node_modules')) {
-              // Keep React and ALL React-dependent libs together to prevent React API errors
-              if (
-                id.includes('react') ||
-                id.includes('react-dom') ||
-                id.includes('@tanstack/react-query') ||
-                id.includes('wagmi') ||
-                id.includes('@rainbow-me/rainbowkit') ||
-                id.includes('recharts') // Also needs React.forwardRef at init
-              ) {
-                return 'framework';
-              }
-              // Separate heavy non-React libs
-              if (id.includes('viem')) {
+              // viem is pure TypeScript with no React - safe to separate
+              if (id.includes('viem') && !id.includes('wagmi')) {
                 return 'viem';
               }
             }
+            // Let Vite/Rollup handle everything else automatically
           }
         }
       },
-      chunkSizeWarningLimit: 1000, // Increase limit since we're bundling more together
+      chunkSizeWarningLimit: 2000, // Larger bundles are fine for now
       sourcemap: false,
       minify: 'esbuild',
     }
