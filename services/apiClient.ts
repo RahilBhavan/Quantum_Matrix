@@ -38,6 +38,21 @@ export class ApiClient {
         return this.request('/api/sentiment/current');
     }
 
+    static async getS3Sentiment(context?: {
+        dataSource?: 'social_media' | 'news' | 'mixed';
+        timeHorizon?: 'short' | 'medium' | 'long';
+        assetMaturity?: 'new' | 'established';
+        volatilityRegime?: 'low' | 'normal' | 'high';
+    }) {
+        const params = new URLSearchParams();
+        if (context?.dataSource) params.append('dataSource', context.dataSource);
+        if (context?.timeHorizon) params.append('timeHorizon', context.timeHorizon);
+        if (context?.assetMaturity) params.append('assetMaturity', context.assetMaturity);
+        if (context?.volatilityRegime) params.append('volatilityRegime', context.volatilityRegime);
+        const query = params.toString() ? `?${params.toString()}` : '';
+        return this.request(`/api/sentiment/s3${query}`);
+    }
+
     static async getSentimentHistory(days: number = 7) {
         return this.request(`/api/sentiment/history?days=${days}`);
     }

@@ -10,6 +10,7 @@ import { STRATEGIES, ECOSYSTEMS, MOCK_NEWS_FEED } from './constants';
 import { PortfolioAllocation, MarketSentiment, AiRecommendation, StrategyCondition } from './types';
 import StrategyDraggable from './components/StrategyDraggable';
 import AssetTile from './components/AssetTile';
+import S3SentimentPanel from './components/S3SentimentPanel';
 import { ApiClient } from './services/apiClient';
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid
@@ -349,61 +350,27 @@ const AppContent: React.FC = () => {
           </div>
         </div>
 
-        {/* Sentiment Footer */}
-        <div className="p-4 border-t-2 border-black bg-white shrink-0 z-20">
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-xs font-bold uppercase tracking-wider">Market Sentiment</span>
-            <button onClick={handleAnalyzeMarket} disabled={isAnalyzing} className="hover:rotate-180 transition-transform">
-              <RefreshCw className={`w-3 h-3 text-black ${isAnalyzing ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
-
-          <div className="border-2 border-black bg-white p-4 shadow-brutal-sm relative">
-            {sentiment ? (
-              <>
-                <div className="flex items-center justify-between mb-2">
-                  <span className={`text-xl font-display font-bold uppercase ${sentiment.label.includes('Bull') ? 'text-defi-success' :
-                    sentiment.label.includes('Bear') ? 'text-defi-danger' : 'text-black'
-                    }`}>
-                    {sentiment.label}
-                  </span>
-                  <span className="text-3xl font-mono font-bold">{sentiment.score}</span>
-                </div>
-                <div className="h-12 w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={sentimentHistory}>
-                      <Tooltip
-                        content={({ active, payload }) => {
-                          if (active && payload && payload.length) {
-                            return (
-                              <div className="bg-black text-white px-3 py-2 border-2 border-black shadow-brutal-sm text-xs font-mono">
-                                <p className="font-bold">{payload[0].payload.time}</p>
-                                <p className="text-defi-accent">Score: {payload[0].value}</p>
-                              </div>
-                            );
-                          }
-                          return null;
-                        }}
-                        cursor={{ stroke: '#000000', strokeWidth: 1, strokeDasharray: '3 3' }}
-                      />
-                      <Line
-                        type="step"
-                        dataKey="score"
-                        stroke="#000000"
-                        strokeWidth={2}
-                        dot={{ fill: '#000000', r: 3 }}
-                        activeDot={{ r: 5, fill: '#7C3AED', stroke: '#000000', strokeWidth: 2 }}
-                        isAnimationActive={true}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </>
-            ) : (
-              <div className="h-16 bg-gray-100 animate-pulse w-full"></div>
-            )}
-          </div>
-        </div>
+        {/* S³ Sentiment Panel */}
+        <S3SentimentPanel
+          onAnalyze={async () => {
+            try {
+              const result: any = await ApiClient.getS3Sentiment({ timeHorizon: 'short' });
+              // Also update the legacy sentiment state for AI Auto-Pilot compatibility
+              if (result) {
+                setSentiment({
+                  score: result.normalizedScore,
+                  label: result.label,
+                  summary: result.summary,
+                  trendingTopics: result.trendingTopics,
+                });
+              }
+              return result;
+            } catch (error) {
+              console.error('Failed to fetch S³ sentiment:', error);
+              return null;
+            }
+          }}
+        />
       </aside>
 
       {/* Main Content */}
