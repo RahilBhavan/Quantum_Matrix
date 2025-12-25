@@ -25,22 +25,20 @@ export default defineConfig(({ mode }) => {
           // Use function-based chunking to ensure proper dependency ordering
           manualChunks(id) {
             if (id.includes('node_modules')) {
-              // Keep React and ALL React-dependent libs together to prevent createContext issues
+              // Keep React and ALL React-dependent libs together to prevent React API errors
               if (
                 id.includes('react') ||
                 id.includes('react-dom') ||
                 id.includes('@tanstack/react-query') ||
                 id.includes('wagmi') ||
-                id.includes('@rainbow-me/rainbowkit')
+                id.includes('@rainbow-me/rainbowkit') ||
+                id.includes('recharts') // Also needs React.forwardRef at init
               ) {
                 return 'framework';
               }
               // Separate heavy non-React libs
               if (id.includes('viem')) {
                 return 'viem';
-              }
-              if (id.includes('recharts')) {
-                return 'charts';
               }
             }
           }
