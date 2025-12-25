@@ -16,12 +16,46 @@ const app = express();
 
 // Security middleware
 app.use(helmet());
-app.use(
-    cors({
-        origin: config.security.corsOrigin,
-        credentials: true,
-    })
-);
+
+// CORS configuration - supports multiple origins and Vercel preview URLs
+const allowedOrigins = config.security.corsOrigins;
+const corsOptions = {
+    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+        // Allow requests with no origin (mobile apps, curl, etc.)
+        if (!origin) {
+            callback(null, true);
+            return;
+        }
+
+        // Allow all origins if configured (for development)
+        if (config.security.corsAllowAll) {
+            callback(null, true);
+            return;
+        }
+
+        // Check if origin matches allowed list
+        if (allowedOrigins.includes(origin)) {
+            callback(null, true);
+            return;
+        }
+
+        // Allow any Vercel preview URL for this project
+        if (origin.match(/^https:\/\/quantum-matrix.*\.vercel\.app$/)) {
+            callback(null, true);
+            return;
+        }
+
+        // Allow the main production domain
+        if (origin === 'https://quantummatrix.rahilbhavan.com') {
+            callback(null, true);
+            return;
+        }
+
+        callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+};
+app.use(cors(corsOptions));
 
 // Body parsing
 app.use(express.json());

@@ -29,8 +29,9 @@ const envSchema = z.object({
     RATE_LIMIT_MAX_REQUESTS: z.string().transform(Number).default('100'),
     AI_RATE_LIMIT_MAX: z.string().transform(Number).default('10'),
 
-    // Security
+    // Security - CORS_ORIGIN supports comma-separated list e.g. "http://localhost:3000,https://myapp.vercel.app"
     CORS_ORIGIN: z.string().default('http://localhost:3000'),
+    CORS_ALLOW_ALL: z.enum(['true', 'false']).default('false'),
     API_KEY_HEADER: z.string().default('X-API-Key'),
     API_SECRET_KEY: z.string(),
 
@@ -83,6 +84,8 @@ export const config = {
     },
     security: {
         corsOrigin: env.CORS_ORIGIN,
+        corsOrigins: env.CORS_ORIGIN.split(',').map(o => o.trim()),
+        corsAllowAll: env.CORS_ALLOW_ALL === 'true',
         apiKeyHeader: env.API_KEY_HEADER,
         apiSecretKey: env.API_SECRET_KEY,
     },
