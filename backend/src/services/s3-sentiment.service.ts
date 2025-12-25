@@ -165,58 +165,106 @@ class S3SentimentService {
     }
 
     /**
-     * Calculate Reddit-based sentiment score
+     * Calculate Reddit-based sentiment score with INFLUENCE WEIGHTING
+     * High engagement posts have more weight
      */
-    private calculateRedditSentiment(posts: Array<{ title: string; score: number; numComments: number }>): number {
+    private calculateRedditSentiment(posts: Array<{ title: string; score: number; numComments: number; influenceScore?: number }>): number {
         if (posts.length === 0) return 0;
 
-        // Simple heuristic: high engagement with certain keywords
-        const bullishKeywords = ['moon', 'pump', 'bullish', 'ath', 'buy', 'long', 'breakout', 'rally'];
-        const bearishKeywords = ['crash', 'dump', 'bearish', 'dead', 'sell', 'short', 'collapse', 'scam'];
+        // Sentiment keywords with intensity weights
+        const bullishKeywords: Record<string, number> = {
+            'moon': 1.0, 'pump': 0.8, 'bullish': 1.0, 'ath': 1.2, 'buy': 0.6,
+            'long': 0.7, 'breakout': 0.9, 'rally': 1.0, 'soaring': 1.1, 'btfd': 0.8,
+            'hodl': 0.5, 'accumulate': 0.7, 'undervalued': 0.8, 'adoption': 0.9,
+        };
+        const bearishKeywords: Record<string, number> = {
+            'crash': 1.2, 'dump': 1.0, 'bearish': 1.0, 'dead': 0.9, 'sell': 0.6,
+            'short': 0.7, 'collapse': 1.1, 'scam': 1.0, 'rug': 1.2, 'ponzi': 1.1,
+            'plunge': 1.0, 'tank': 0.9, 'bubble': 0.8, 'warning': 0.7,
+        };
 
-        let bullishScore = 0;
-        let bearishScore = 0;
-        let totalWeight = 0;
+        let weightedBullish = 0;
+        let weightedBearish = 0;
+        let totalInfluence = 0;
 
         for (const post of posts) {
             const title = post.title.toLowerCase();
-            const weight = Math.log10(post.score + 1) + Math.log10(post.numComments + 1);
 
-            const hasBullish = bullishKeywords.some(kw => title.includes(kw));
-            const hasBearish = bearishKeywords.some(kw => title.includes(kw));
+            // Use influence score if available, otherwise calculate from engagement
+            const influence = post.influenceScore ??
+                (Math.log10(post.score + 1) * Math.log10(post.numComments + 1));
 
-            if (hasBullish && !hasBearish) bullishScore += weight;
-            else if (hasBearish && !hasBullish) bearishScore += weight;
+            // Calculate sentiment for this post
+            let postBullish = 0;
+            let postBearish = 0;
 
-            totalWeight += weight;
+            for (const [keyword, intensity] of Object.entries(bullishKeywords)) {
+                if (title.includes(keyword)) postBullish += intensity;
+            }
+            for (const [keyword, intensity] of Object.entries(bearishKeywords)) {
+                if (title.includes(keyword)) postBearish += intensity;
+            }
+
+            // Weight by influence - high engagement posts matter more
+            weightedBullish += postBullish * influence;
+            weightedBearish += postBearish * influence;
+            totalInfluence += influence;
         }
 
-        if (totalWeight === 0) return 0;
+        if (totalInfluence === 0) return 0;
 
-        return (bullishScore - bearishScore) / totalWeight;
+        // Normalize to -1 to +1
+        const rawSentiment = (weightedBullish - weightedBearish) / totalInfluence;
+        return this.clamp(rawSentiment, -1, 1);
     }
 
     /**
-     * Calculate trend-based sentiment (DL proxy)
+     * Calculate trend-based sentiment (DL proxy) with CREDIBILITY WEIGHTING
      */
-    private calculateTrendSentiment(news: Array<{ title: string }>): number {
-        // Simple sentiment analysis on news headlines
-        const positiveWords = ['surge', 'rally', 'growth', 'adoption', 'bullish', 'record', 'breakthrough', 'success'];
-        const negativeWords = ['crash', 'fall', 'decline', 'bearish', 'loss', 'hack', 'failure', 'ban'];
+    private calculateTrendSentiment(news: Array<{ title: string; credibilityScore?: number }>): number {
+        if (news.length === 0) return 0;
 
-        let positiveCount = 0;
-        let negativeCount = 0;
+        // Sentiment keywords with intensity
+        const positiveWords: Record<string, number> = {
+            'surge': 1.0, 'rally': 0.9, 'growth': 0.7, 'adoption': 0.8, 'bullish': 1.0,
+            'record': 0.9, 'breakthrough': 1.0, 'success': 0.7, 'milestone': 0.8,
+            'partnership': 0.6, 'upgrade': 0.7, 'launch': 0.5, 'approval': 0.9,
+        };
+        const negativeWords: Record<string, number> = {
+            'crash': 1.2, 'fall': 0.8, 'decline': 0.7, 'bearish': 1.0, 'loss': 0.8,
+            'hack': 1.1, 'failure': 0.9, 'ban': 1.0, 'lawsuit': 0.9, 'investigation': 0.8,
+            'fraud': 1.1, 'warning': 0.7, 'risk': 0.5, 'concern': 0.6,
+        };
+
+        let weightedPositive = 0;
+        let weightedNegative = 0;
+        let totalCredibility = 0;
 
         for (const item of news) {
             const title = item.title.toLowerCase();
-            positiveCount += positiveWords.filter(w => title.includes(w)).length;
-            negativeCount += negativeWords.filter(w => title.includes(w)).length;
+            const credibility = item.credibilityScore ?? 0.5;
+
+            let itemPositive = 0;
+            let itemNegative = 0;
+
+            for (const [word, intensity] of Object.entries(positiveWords)) {
+                if (title.includes(word)) itemPositive += intensity;
+            }
+            for (const [word, intensity] of Object.entries(negativeWords)) {
+                if (title.includes(word)) itemNegative += intensity;
+            }
+
+            // Weight by credibility - trusted sources matter more
+            weightedPositive += itemPositive * credibility;
+            weightedNegative += itemNegative * credibility;
+            totalCredibility += credibility;
         }
 
-        const total = positiveCount + negativeCount;
-        if (total === 0) return 0;
+        if (totalCredibility === 0) return 0;
 
-        return (positiveCount - negativeCount) / total;
+        // Normalize to -1 to +1
+        const rawSentiment = (weightedPositive - weightedNegative) / totalCredibility;
+        return this.clamp(rawSentiment * 2, -1, 1); // Scale up since keyword matches are sparse
     }
 
     /**

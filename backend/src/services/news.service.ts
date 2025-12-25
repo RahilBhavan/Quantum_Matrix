@@ -1,12 +1,34 @@
 import { logger } from '../middleware/logger.js';
 import { cacheService } from './cache.service.js';
 
+// Source credibility tiers
+const SOURCE_CREDIBILITY: Record<string, number> = {
+    // Tier 1: Highly credible (1.0)
+    'coindesk': 1.0,
+    'the block': 1.0,
+    'bloomberg': 1.0,
+    'reuters': 1.0,
+    // Tier 2: Credible (0.8)
+    'cointelegraph': 0.8,
+    'decrypt': 0.8,
+    'crypto.com': 0.8,
+    'binance': 0.8,
+    // Tier 3: Moderate (0.6)
+    'coingecko': 0.6,
+    'medium': 0.6,
+    'unknown': 0.5,
+    // Tier 4: Social/User-generated (0.4)
+    'reddit': 0.4,
+    'twitter': 0.4,
+};
+
 interface NewsItem {
     title: string;
     source: string;
     publishedAt: string;
     url?: string;
     sentiment?: 'positive' | 'negative' | 'neutral';
+    credibilityScore: number;  // 0-1 based on source tier
 }
 
 interface FearGreedData {
@@ -20,6 +42,8 @@ interface RedditPost {
     score: number;
     numComments: number;
     subreddit: string;
+    influenceScore: number;  // Calculated from engagement
+    createdAt: number;       // Unix timestamp
 }
 
 interface MarketDataSummary {
@@ -27,6 +51,12 @@ interface MarketDataSummary {
     fearGreedIndex: FearGreedData | null;
     redditSentiment: RedditPost[];
     trendingCoins: string[];
+    // Aggregated influence metrics
+    aggregateInfluence: {
+        totalRedditInfluence: number;
+        averageCredibility: number;
+        highEngagementCount: number;
+    };
 }
 
 /**
@@ -56,15 +86,37 @@ class NewsService {
             this.fetchTrendingCoins(),
         ]);
 
+        const newsData = news.status === 'fulfilled' ? news.value : [];
+        const redditData = reddit.status === 'fulfilled' ? reddit.value : [];
+
+        // Calculate aggregate influence metrics
+        const totalRedditInfluence = redditData.reduce((sum, p) => sum + p.influenceScore, 0);
+        const averageCredibility = newsData.length > 0
+            ? newsData.reduce((sum, n) => sum + n.credibilityScore, 0) / newsData.length
+            : 0.5;
+        const highEngagementCount = redditData.filter(p => p.influenceScore > 5).length;
+
         const result: MarketDataSummary = {
-            news: news.status === 'fulfilled' ? news.value : [],
+            news: newsData,
             fearGreedIndex: fearGreed.status === 'fulfilled' ? fearGreed.value : null,
-            redditSentiment: reddit.status === 'fulfilled' ? reddit.value : [],
+            redditSentiment: redditData,
             trendingCoins: trending.status === 'fulfilled' ? trending.value : [],
+            aggregateInfluence: {
+                totalRedditInfluence,
+                averageCredibility,
+                highEngagementCount,
+            },
         };
 
         // Cache the result
         await cacheService.set(this.CACHE_KEY, result, this.CACHE_TTL);
+
+        logger.info('Market data aggregated with influence scoring', {
+            newsCount: newsData.length,
+            redditCount: redditData.length,
+            avgCredibility: averageCredibility.toFixed(2),
+            highEngagement: highEngagementCount,
+        });
 
         return result;
     }
@@ -90,16 +142,33 @@ class NewsService {
 
             const data = await response.json();
 
-            return (data.status_updates || []).slice(0, 10).map((item: any) => ({
-                title: item.description?.substring(0, 200) || 'No description',
-                source: item.project?.name || 'CoinGecko',
-                publishedAt: item.created_at,
-                url: item.project?.links?.homepage?.[0],
-            }));
+            return (data.status_updates || []).slice(0, 10).map((item: any) => {
+                const source = item.project?.name || 'CoinGecko';
+                return {
+                    title: item.description?.substring(0, 200) || 'No description',
+                    source,
+                    publishedAt: item.created_at,
+                    url: item.project?.links?.homepage?.[0],
+                    credibilityScore: this.getSourceCredibility(source),
+                };
+            });
         } catch (error) {
             logger.error('Failed to fetch CoinGecko news:', error);
             return this.getFallbackNews();
         }
+    }
+
+    /**
+     * Get credibility score for a source
+     */
+    private getSourceCredibility(source: string): number {
+        const normalized = source.toLowerCase();
+        for (const [key, score] of Object.entries(SOURCE_CREDIBILITY)) {
+            if (normalized.includes(key)) {
+                return score;
+            }
+        }
+        return SOURCE_CREDIBILITY['unknown'] || 0.5;
     }
 
     /**
@@ -130,13 +199,13 @@ class NewsService {
     }
 
     /**
-     * Fetch Reddit cryptocurrency sentiment
+     * Fetch Reddit cryptocurrency sentiment with influence scoring
      * Uses public JSON API (no auth required)
      */
     private async fetchRedditSentiment(): Promise<RedditPost[]> {
         try {
             const response = await fetch(
-                'https://www.reddit.com/r/cryptocurrency/hot.json?limit=15',
+                'https://www.reddit.com/r/cryptocurrency/hot.json?limit=25',
                 {
                     headers: {
                         'User-Agent': 'QuantumMatrix/1.0',
@@ -149,13 +218,31 @@ class NewsService {
             }
 
             const data = await response.json();
+            const now = Date.now() / 1000; // Unix timestamp
 
-            return (data.data?.children || []).map((child: any) => ({
-                title: child.data?.title || '',
-                score: child.data?.score || 0,
-                numComments: child.data?.num_comments || 0,
-                subreddit: child.data?.subreddit || 'cryptocurrency',
-            }));
+            return (data.data?.children || []).map((child: any) => {
+                const score = child.data?.score || 0;
+                const numComments = child.data?.num_comments || 0;
+                const createdAt = child.data?.created_utc || now;
+
+                // Calculate influence score
+                // Formula: log10(upvotes + 1) * log10(comments + 1) * freshnessDecay
+                const upvoteFactor = Math.log10(Math.max(score, 1) + 1);
+                const commentFactor = Math.log10(Math.max(numComments, 1) + 1);
+                const ageHours = (now - createdAt) / 3600;
+                const freshnessDecay = Math.exp(-ageHours / 24); // Decay over 24 hours
+
+                const influenceScore = upvoteFactor * commentFactor * freshnessDecay * 10; // Scale up
+
+                return {
+                    title: child.data?.title || '',
+                    score,
+                    numComments,
+                    subreddit: child.data?.subreddit || 'cryptocurrency',
+                    influenceScore: Math.round(influenceScore * 100) / 100,
+                    createdAt,
+                };
+            });
         } catch (error) {
             logger.error('Failed to fetch Reddit sentiment:', error);
             return [];
@@ -193,16 +280,19 @@ class NewsService {
                 title: 'Crypto markets showing mixed signals amid global economic uncertainty',
                 source: 'Market Analysis',
                 publishedAt: new Date().toISOString(),
+                credibilityScore: 0.5,
             },
             {
                 title: 'DeFi protocols continue to see steady growth in TVL',
                 source: 'DeFi Watch',
                 publishedAt: new Date().toISOString(),
+                credibilityScore: 0.5,
             },
             {
                 title: 'Institutional investors maintain cautious stance on digital assets',
                 source: 'Financial Times',
                 publishedAt: new Date().toISOString(),
+                credibilityScore: 1.0,
             },
         ];
     }
