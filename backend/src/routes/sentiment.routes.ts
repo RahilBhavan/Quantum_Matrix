@@ -10,7 +10,7 @@ const router = Router();
 
 /**
  * GET /api/sentiment/current
- * Get current market sentiment (cached)
+ * Get current market sentiment using real-time data sources
  */
 router.get(
     '/current',
@@ -33,16 +33,9 @@ router.get(
             });
         }
 
-        // Sample news headlines (in production, fetch from news API)
-        const sampleNews = [
-            'Bitcoin ETF sees record inflows as institutional adoption grows',
-            'Ethereum upgrade successfully deployed, gas fees drop 40%',
-            'Major DeFi protocol announces $100M liquidity mining program',
-            'Regulatory clarity improves as SEC approves crypto framework',
-        ];
-
-        // Get sentiment from Gemini
-        const sentiment = await geminiService.analyzeSentiment(sampleNews);
+        // Get real-time sentiment from live data sources
+        // (CoinGecko, Fear & Greed Index, Reddit r/cryptocurrency)
+        const sentiment = await geminiService.analyzeRealTimeSentiment();
 
         // Save to database for historical tracking
         await SentimentQueries.create(sentiment);

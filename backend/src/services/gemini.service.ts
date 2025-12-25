@@ -3,6 +3,7 @@ import { config } from '../config/env.js';
 import { cacheService } from './cache.service.js';
 import { logger } from '../middleware/logger.js';
 import { CacheKeys, CacheTTL } from '../utils/cache.js';
+import { newsService } from './news.service.js';
 import type { MarketSentiment, AiRecommendation, StrategyLayer } from '../types/index.js';
 
 export class GeminiService {
@@ -20,7 +21,7 @@ export class GeminiService {
     }
 
     /**
-     * Analyze market sentiment from news headlines
+     * Analyze market sentiment from news headlines (legacy - accepts string array)
      */
     async analyzeSentiment(news: string[]): Promise<MarketSentiment> {
         const cacheKey = CacheKeys.sentiment();
@@ -66,6 +67,152 @@ export class GeminiService {
         }
 
         return this.getFallbackSentiment();
+    }
+
+    /**
+     * Analyze real-time market sentiment using live data sources
+     * This is the preferred method - uses CoinGecko, Reddit, Fear & Greed Index
+     */
+    async analyzeRealTimeSentiment(): Promise<MarketSentiment> {
+        const cacheKey = CacheKeys.sentiment();
+
+        // Try cache first
+        const cached = await cacheService.get<MarketSentiment>(cacheKey);
+        if (cached) {
+            logger.info('Real-time sentiment served from cache');
+            return cached;
+        }
+
+        // Fetch real market data
+        logger.info('Fetching real-time market data...');
+        const marketData = await newsService.getAggregatedData();
+
+        // If we have Fear & Greed data but no API key, use it directly
+        if (!this.ai && marketData.fearGreedIndex) {
+            const fng = marketData.fearGreedIndex;
+            const sentiment: MarketSentiment = {
+                score: fng.value,
+                label: this.scoreToLabel(fng.value),
+                summary: `Market sentiment is ${fng.classification.toLowerCase()}. Fear & Greed Index: ${fng.value}/100.`,
+                trendingTopics: marketData.trendingCoins.slice(0, 5),
+                confidence: 0.7, // Moderate confidence from single source
+            };
+            await cacheService.set(cacheKey, sentiment, CacheTTL.sentiment);
+            return sentiment;
+        }
+
+        // If no API key and no Fear & Greed, return fallback
+        if (!this.ai) {
+            return this.getFallbackSentiment();
+        }
+
+        // Format data for Gemini prompt
+        const promptData = newsService.formatForPrompt(marketData);
+
+        // Retry logic with exponential backoff
+        for (let attempt = 1; attempt <= this.MAX_RETRIES; attempt++) {
+            try {
+                const result = await this.callEnhancedSentimentAPI(promptData, marketData);
+
+                // Cache successful result
+                await cacheService.set(cacheKey, result, CacheTTL.sentiment);
+
+                logger.info(`Real-time sentiment analysis successful (attempt ${attempt})`, {
+                    score: result.score,
+                    label: result.label,
+                    sources: {
+                        news: marketData.news.length,
+                        reddit: marketData.redditSentiment.length,
+                        hasFearGreed: !!marketData.fearGreedIndex,
+                    },
+                });
+
+                this.requestCount++;
+                return result;
+            } catch (error) {
+                logger.error(`Gemini API error (attempt ${attempt}):`, error);
+
+                if (attempt === this.MAX_RETRIES) {
+                    // Use Fear & Greed as fallback if available
+                    if (marketData.fearGreedIndex) {
+                        const fng = marketData.fearGreedIndex;
+                        return {
+                            score: fng.value,
+                            label: this.scoreToLabel(fng.value),
+                            summary: `Fallback: ${fng.classification}. Fear & Greed Index: ${fng.value}/100.`,
+                            trendingTopics: marketData.trendingCoins.slice(0, 5),
+                            confidence: 0.5,
+                        };
+                    }
+                    return this.getFallbackSentiment();
+                }
+
+                await this.sleep(Math.pow(2, attempt - 1) * 1000);
+            }
+        }
+
+        return this.getFallbackSentiment();
+    }
+
+    /**
+     * Convert score to label
+     */
+    private scoreToLabel(score: number): 'Bearish' | 'Neutral' | 'Bullish' | 'Euphoric' {
+        if (score <= 25) return 'Bearish';
+        if (score <= 45) return 'Neutral';
+        if (score <= 75) return 'Bullish';
+        return 'Euphoric';
+    }
+
+    /**
+     * Call Gemini with enhanced multi-source prompt
+     */
+    private async callEnhancedSentimentAPI(
+        formattedData: string,
+        rawData: { fearGreedIndex: { value: number } | null; trendingCoins: string[] }
+    ): Promise<MarketSentiment> {
+        if (!this.ai) throw new Error('Gemini AI not initialized');
+
+        const prompt = `You are a crypto market sentiment analyst. Analyze the following real-time market data and provide a comprehensive sentiment assessment.
+
+${formattedData}
+
+Based on this data, determine the overall market sentiment.
+Consider:
+1. The Fear & Greed Index value and what it indicates
+2. News headlines and their tone (positive, negative, neutral)
+3. Reddit community sentiment (upvotes indicate engagement/agreement)
+4. Trending coins and what narratives they represent
+
+Return a JSON object with:
+- score: number 0-100 (0 = extreme fear/bearish, 100 = extreme greed/euphoric)
+- label: one of 'Bearish', 'Neutral', 'Bullish', 'Euphoric'
+- summary: a concise 1-2 sentence market summary
+- trendingTopics: array of 3-5 current trending topics/narratives
+- confidence: number 0-1 indicating your confidence in this assessment`;
+
+        const response = await this.ai.models.generateContent({
+            model: config.gemini.model,
+            contents: prompt,
+            config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        score: { type: Type.INTEGER },
+                        label: { type: Type.STRING },
+                        summary: { type: Type.STRING },
+                        trendingTopics: { type: Type.ARRAY, items: { type: Type.STRING } },
+                        confidence: { type: Type.NUMBER },
+                    },
+                },
+            },
+        });
+
+        const text = response.text;
+        if (!text) throw new Error('No response from AI');
+
+        return JSON.parse(text) as MarketSentiment;
     }
 
     /**
