@@ -1,5 +1,6 @@
 import { logger } from '../middleware/logger.js';
 import { cacheService } from './cache.service.js';
+import { videoService } from './video.service.js';
 
 // Source credibility tiers
 const SOURCE_CREDIBILITY: Record<string, number> = {
@@ -51,11 +52,13 @@ interface MarketDataSummary {
     fearGreedIndex: FearGreedData | null;
     redditSentiment: RedditPost[];
     trendingCoins: string[];
+    videoContent: string;  // Aggregated video titles and transcripts
     // Aggregated influence metrics
     aggregateInfluence: {
         totalRedditInfluence: number;
         averageCredibility: number;
         highEngagementCount: number;
+        videoCount: number;
     };
 }
 
@@ -78,16 +81,18 @@ class NewsService {
             return cached;
         }
 
-        // Fetch from all sources in parallel
-        const [news, fearGreed, reddit, trending] = await Promise.allSettled([
+        // Fetch from all sources in parallel (including video)
+        const [news, fearGreed, reddit, trending, video] = await Promise.allSettled([
             this.fetchCryptoNews(),
             this.fetchFearGreedIndex(),
             this.fetchRedditSentiment(),
             this.fetchTrendingCoins(),
+            videoService.getVideoSentimentData(),
         ]);
 
         const newsData = news.status === 'fulfilled' ? news.value : [];
         const redditData = reddit.status === 'fulfilled' ? reddit.value : [];
+        const videoData = video.status === 'fulfilled' ? video.value : null;
 
         // Calculate aggregate influence metrics
         const totalRedditInfluence = redditData.reduce((sum, p) => sum + p.influenceScore, 0);
@@ -95,16 +100,19 @@ class NewsService {
             ? newsData.reduce((sum, n) => sum + n.credibilityScore, 0) / newsData.length
             : 0.5;
         const highEngagementCount = redditData.filter(p => p.influenceScore > 5).length;
+        const videoCount = videoData?.videos?.length || 0;
 
         const result: MarketDataSummary = {
             news: newsData,
             fearGreedIndex: fearGreed.status === 'fulfilled' ? fearGreed.value : null,
             redditSentiment: redditData,
             trendingCoins: trending.status === 'fulfilled' ? trending.value : [],
+            videoContent: videoData?.aggregatedContent || '',
             aggregateInfluence: {
                 totalRedditInfluence,
                 averageCredibility,
                 highEngagementCount,
+                videoCount,
             },
         };
 
@@ -114,6 +122,7 @@ class NewsService {
         logger.info('Market data aggregated with influence scoring', {
             newsCount: newsData.length,
             redditCount: redditData.length,
+            videoCount,
             avgCredibility: averageCredibility.toFixed(2),
             highEngagement: highEngagementCount,
         });
@@ -328,6 +337,11 @@ class NewsService {
         // Trending
         if (data.trendingCoins.length > 0) {
             sections.push(`TRENDING COINS: ${data.trendingCoins.join(', ')}`);
+        }
+
+        // Video content (YouTube Shorts)
+        if (data.videoContent && data.videoContent.length > 0) {
+            sections.push(data.videoContent);
         }
 
         return sections.join('\n\n');
