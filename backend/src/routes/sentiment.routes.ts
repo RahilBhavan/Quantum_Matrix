@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { asyncHandler } from '../middleware/errorHandler.js';
 import { aiLimiter } from '../middleware/rateLimiter.js';
 import { geminiService } from '../services/gemini.service.js';
+import { s3SentimentService } from '../services/s3-sentiment.service.js';
 import { SentimentQueries } from '../db/queries/sentiment.js';
 import { cacheService } from '../services/cache.service.js';
 import { CacheKeys, CacheTTL } from '../utils/cache.js';
@@ -111,6 +112,40 @@ router.post(
         res.json({
             success: true,
             data: recommendation,
+        });
+    })
+);
+
+/**
+ * GET /api/sentiment/s3
+ * Get the S³ (Sentiment Synthesis Score) - advanced multi-model analysis
+ */
+router.get(
+    '/s3',
+    aiLimiter,
+    asyncHandler(async (req: any, res: any) => {
+        // Optional context parameters
+        const context = {
+            dataSource: req.query.dataSource as 'social_media' | 'news' | 'mixed' | undefined,
+            timeHorizon: req.query.timeHorizon as 'short' | 'medium' | 'long' | undefined,
+            assetMaturity: req.query.assetMaturity as 'new' | 'established' | undefined,
+            volatilityRegime: req.query.volatilityRegime as 'low' | 'normal' | 'high' | undefined,
+        };
+
+        const s3Result = await s3SentimentService.calculateS3Score(context);
+
+        // Also save to database for historical tracking
+        await SentimentQueries.create({
+            score: s3Result.normalizedScore,
+            label: s3Result.label,
+            summary: s3Result.summary,
+            trendingTopics: s3Result.trendingTopics,
+            confidence: s3Result.confidence,
+        });
+
+        res.json({
+            success: true,
+            data: s3Result,
         });
     })
 );
