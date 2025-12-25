@@ -22,15 +22,31 @@ export default defineConfig(({ mode }) => {
     build: {
       rollupOptions: {
         output: {
-          manualChunks: {
-            // React and React Query MUST be together - Query uses React.createContext at init
-            'react-vendor': ['react', 'react-dom', '@tanstack/react-query'],
-            'web3-vendor': ['wagmi', 'viem', '@rainbow-me/rainbowkit'],
-            'chart-vendor': ['recharts'],
+          // Use function-based chunking to ensure proper dependency ordering
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              // Keep React and ALL React-dependent libs together to prevent createContext issues
+              if (
+                id.includes('react') ||
+                id.includes('react-dom') ||
+                id.includes('@tanstack/react-query') ||
+                id.includes('wagmi') ||
+                id.includes('@rainbow-me/rainbowkit')
+              ) {
+                return 'framework';
+              }
+              // Separate heavy non-React libs
+              if (id.includes('viem')) {
+                return 'viem';
+              }
+              if (id.includes('recharts')) {
+                return 'charts';
+              }
+            }
           }
         }
       },
-      chunkSizeWarningLimit: 600,
+      chunkSizeWarningLimit: 1000, // Increase limit since we're bundling more together
       sourcemap: false,
       minify: 'esbuild',
     }
