@@ -31,7 +31,11 @@ interface IPoolDataProvider {
         uint40 lastUpdateTimestamp
     );
     
-    function getATokenAddress(address asset) external view returns (address);
+    function getReserveTokensAddresses(address asset) external view returns (
+        address aTokenAddress,
+        address stableDebtTokenAddress,
+        address variableDebtTokenAddress
+    );
 }
 
 struct ReserveData {
@@ -101,7 +105,7 @@ contract AaveV3Adapter is IStrategyAdapter, Ownable, Pausable, ReentrancyGuard {
         asset = _asset;
         
         // Get aToken address from data provider
-        aToken = dataProvider.getATokenAddress(_asset);
+        (aToken, , ) = dataProvider.getReserveTokensAddresses(_asset);
         require(aToken != address(0), "aToken not found");
     }
     

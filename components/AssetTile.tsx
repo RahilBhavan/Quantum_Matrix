@@ -155,63 +155,7 @@ const Sparkline = ({ assetId }: { assetId: string }) => {
   );
 };
 
-// Circular Gauge Component with glow effect
-const CircularGauge = ({ value, maxValue = 20 }: { value: number; maxValue?: number }) => {
-  const percentage = Math.min((value / maxValue) * 100, 100);
-  const radius = 32;
-  const strokeWidth = 5;
-  const normalizedRadius = radius - strokeWidth / 2;
-  const circumference = normalizedRadius * 2 * Math.PI;
-  const strokeDashoffset = circumference - (percentage / 100) * circumference;
-
-  // Dynamic color and glow based on yield level
-  const getColor = () => {
-    if (value >= 15) return { color: '#10b981', glow: 'shadow-glow-success' };
-    if (value >= 8) return { color: '#f59e0b', glow: '' };
-    return { color: '#64748b', glow: '' };
-  };
-
-  const { color, glow } = getColor();
-
-  return (
-    <div className={`relative w-16 h-16 flex items-center justify-center ${glow}`}>
-      <svg height={radius * 2} width={radius * 2} className="transform -rotate-90">
-        {/* Background circle */}
-        <circle
-          stroke="rgba(255, 255, 255, 0.08)"
-          fill="transparent"
-          strokeWidth={strokeWidth}
-          r={normalizedRadius}
-          cx={radius}
-          cy={radius}
-        />
-        {/* Progress circle */}
-        <circle
-          stroke={color}
-          fill="transparent"
-          strokeWidth={strokeWidth}
-          strokeDasharray={circumference + ' ' + circumference}
-          style={{
-            strokeDashoffset,
-            transition: 'stroke-dashoffset 0.5s ease, stroke 0.3s ease',
-            filter: value >= 15 ? 'drop-shadow(0 0 6px rgba(16, 185, 129, 0.5))' : 'none'
-          }}
-          strokeLinecap="round"
-          r={normalizedRadius}
-          cx={radius}
-          cy={radius}
-        />
-      </svg>
-      {/* Center text */}
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="font-mono font-bold text-base leading-none tabular-nums" style={{ color }}>
-          {value.toFixed(1)}
-        </span>
-        <span className="text-[9px] font-medium text-defi-text-muted leading-none mt-0.5">%</span>
-      </div>
-    </div>
-  );
-};
+// CircularGauge removed - using text-only APY display for cleaner UI
 
 const AssetTile: React.FC<Props> = ({
   asset, allocation, strategies, currentSentiment,
@@ -294,13 +238,12 @@ const AssetTile: React.FC<Props> = ({
         }
       }}
       className={`
-        relative flex flex-col rounded-2xl h-[480px] w-full transition-all duration-300
-        bg-gradient-to-b from-white/[0.04] to-white/[0.01] backdrop-blur-xl
-        border border-white/[0.08] hover:border-white/[0.15]
-        shadow-xl shadow-black/20 hover:shadow-2xl hover:shadow-black/30
-        hover:-translate-y-1
-        focus:outline-none focus-visible:ring-2 focus-visible:ring-defi-accent focus-visible:ring-offset-2 focus-visible:ring-offset-defi-bg
-        ${isActiveOver ? 'ring-2 ring-defi-accent shadow-glow-accent border-defi-accent/50 scale-[1.02]' : ''}
+        relative flex flex-col rounded-xl w-full transition-all duration-200
+        bg-gradient-to-b from-white/[0.03] to-white/[0.01] backdrop-blur-lg
+        border border-white/[0.08] hover:border-white/[0.12]
+        shadow-lg shadow-black/10
+        focus:outline-none focus-visible:ring-2 focus-visible:ring-defi-accent
+        ${isActiveOver ? 'ring-2 ring-defi-accent border-defi-accent/40' : ''}
         ${selectedStrategyId ? 'cursor-pointer hover:ring-1 hover:ring-defi-purple/50' : ''}
       `}
       {...(!useDndKit ? {
@@ -309,40 +252,30 @@ const AssetTile: React.FC<Props> = ({
         onDrop: handleDrop,
       } : {})}
     >
-      {/* Header Section */}
-      <div className="p-5 border-b border-defi-border/60 flex items-start justify-between relative z-10 bg-gradient-to-b from-white/[0.02] to-transparent">
-        <div className="flex items-start gap-4">
-          {/* Circular Logo with animated gradient ring */}
-          <div className="relative group/icon">
-            {/* Animated glow ring */}
-            <div className="absolute -inset-1 bg-gradient-to-r from-defi-accent via-defi-purple to-defi-cyan rounded-xl opacity-40 blur-md group-hover/icon:opacity-70 transition-all duration-500 animate-pulse" />
-            <div className="relative w-14 h-14 rounded-xl bg-gradient-to-br from-defi-card via-defi-bg-secondary to-defi-card border border-white/10 p-2 flex items-center justify-center shadow-glass-lg backdrop-blur-sm">
-              <img src={asset.icon} alt={asset.symbol} className="w-full h-full object-contain drop-shadow-lg" onError={(e) => (e.currentTarget.style.display = 'none')} />
-            </div>
+      {/* Header Section - Compact */}
+      <div className="px-4 py-3 border-b border-defi-border/40 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-defi-card border border-white/10 p-1.5 flex items-center justify-center">
+            <img src={asset.icon} alt={asset.symbol} className="w-full h-full object-contain" onError={(e) => (e.currentTarget.style.display = 'none')} />
           </div>
-          <div className="flex flex-col pt-1">
-            <h3 className="font-display text-3xl font-bold leading-none text-defi-text tracking-tight">{asset.symbol}</h3>
-            <p className="text-xs font-medium text-defi-text-muted mt-1">{asset.name}</p>
+          <div>
+            <h3 className="font-display text-lg font-bold text-defi-text leading-none">{asset.symbol}</h3>
+            <p className="text-[10px] text-defi-text-muted">{asset.name}</p>
           </div>
         </div>
-
-        <div className="text-right flex flex-col items-end pt-1">
-          {/* Total Balance */}
-          <div className="text-2xl font-mono font-bold tabular-nums text-defi-text leading-none mb-2">
+        <div className="text-right">
+          <div className="text-lg font-mono font-bold tabular-nums text-defi-text">
             ${asset.balance.toLocaleString()}
           </div>
-
-          {/* Price + Sparkline */}
-          <div className="flex items-center gap-3 bg-defi-card/50 border border-defi-border px-3 py-1.5 rounded-lg">
-            <span className="text-xs font-medium font-mono text-defi-text-secondary tabular-nums">${asset.price.toLocaleString()}</span>
-            <div className="h-4 w-px bg-defi-border"></div>
+          <div className="flex items-center gap-2 justify-end">
+            <span className="text-[10px] font-mono text-defi-text-muted">${asset.price.toLocaleString()}</span>
             <Sparkline assetId={asset.id} />
           </div>
         </div>
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 overflow-hidden relative p-4 flex flex-col">
+      {/* Main Content Area - Compact */}
+      <div className="flex-1 overflow-hidden relative p-3 flex flex-col min-h-[120px]">
 
         {allocation && allocation.layers.length > 0 ? (
           <div className="overflow-y-auto custom-scrollbar h-full pr-1 pb-12">
@@ -453,90 +386,52 @@ const AssetTile: React.FC<Props> = ({
             })}
           </div>
         ) : (
-          <div className={`h-full flex flex-col items-center justify-center text-center p-6 m-2 relative rounded-xl overflow-hidden transition-all duration-300 ${isActiveOver ? 'bg-defi-accent/5' : 'bg-white/[0.02]'}`}>
-            {/* Animated dashed border */}
-            <div className={`absolute inset-0 rounded-xl border-2 border-dashed transition-all duration-300 ${isActiveOver ? 'border-defi-accent animate-pulse' : 'border-defi-border/50'}`}
-              style={{
-                backgroundImage: isActiveOver ? 'linear-gradient(135deg, transparent 0%, rgba(97, 218, 251, 0.03) 50%, transparent 100%)' : 'none'
-              }}
-            />
-            {/* Floating glow effect during drag */}
-            {isActiveOver && (
-              <div className="absolute inset-0 bg-gradient-to-br from-defi-accent/10 via-transparent to-defi-purple/10 animate-pulse" />
-            )}
-            {/* Empty state illustration with enhanced visuals */}
-            <div className="mb-5 relative">
-              {/* Outer glow ring */}
-              <div className={`absolute -inset-4 rounded-3xl blur-xl transition-all duration-500 ${isActiveOver ? 'bg-defi-accent/20' : 'bg-defi-purple/10'}`} />
-              <div className={`relative w-20 h-20 rounded-2xl bg-gradient-to-br from-defi-accent/20 via-defi-purple/15 to-defi-cyan/10 border transition-all duration-300 flex items-center justify-center ${isActiveOver ? 'border-defi-accent/50 scale-110' : 'border-white/10'}`}>
-                <Layers className={`w-9 h-9 transition-all duration-300 ${isActiveOver ? 'text-defi-accent' : 'text-defi-text-muted/60'}`} />
-              </div>
-            </div>
-            <span className={`text-sm font-medium mb-1 transition-colors duration-300 ${isActiveOver ? 'text-defi-accent' : 'text-defi-text-secondary'}`}>Drag a strategy block here</span>
-            <span className="text-xs text-defi-text-muted mb-5">or use Quick Fill to auto-configure</span>
-
+          <div className={`h-full flex flex-col items-center justify-center text-center p-4 m-1 rounded-lg border border-dashed transition-colors ${isActiveOver ? 'border-defi-accent bg-defi-accent/5' : 'border-defi-border/40'}`}>
+            <Layers className={`w-6 h-6 mb-2 ${isActiveOver ? 'text-defi-accent' : 'text-defi-text-muted/50'}`} />
+            <span className="text-xs text-defi-text-muted mb-3">Drop strategy or use Quick Fill</span>
             <button
               onClick={() => onAutoFill(asset.id)}
-              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-defi-accent/10 to-defi-purple/10 border border-defi-accent/30 rounded-xl text-xs font-semibold text-defi-accent-light hover:text-white hover:from-defi-accent hover:to-defi-purple hover:border-transparent transition-all duration-300 shadow-sm hover:shadow-glow-accent"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-defi-accent/10 border border-defi-accent/30 rounded-lg text-xs font-medium text-defi-accent-light hover:bg-defi-accent hover:text-white transition-colors"
             >
-              <Wand2 className="w-3.5 h-3.5" /> Quick Fill
+              <Wand2 className="w-3 h-3" /> Quick Fill
             </button>
           </div>
         )}
       </div>
 
-      {/* Footer */}
-      <div className="border-t border-defi-border/60 p-4 shrink-0 bg-gradient-to-t from-white/[0.02] to-transparent">
-        <div className="flex items-center gap-4 mb-4">
-          <CircularGauge value={activeYield} maxValue={20} />
-          <div className="flex flex-col flex-1">
-            <span className="text-[10px] font-semibold text-defi-text-muted tracking-widest uppercase leading-none mb-1.5">Est. Yield</span>
-            <div className="flex items-baseline gap-1.5">
-              <span className={`font-mono font-bold text-xl leading-none tabular-nums ${activeYield >= 15 ? 'text-defi-success' : activeYield >= 8 ? 'text-defi-warning' : 'text-defi-text'}`}>
-                {activeYield.toFixed(2)}%
-              </span>
-              <span className="text-[9px] font-medium text-defi-text-muted">APY</span>
-            </div>
-            {totalAllocatedWeight > 0 && (
-              <div className="mt-2.5 flex items-center gap-2">
-                <div className="h-2 flex-1 bg-defi-bg-secondary rounded-full overflow-hidden border border-white/5">
-                  <div
-                    className="h-full bg-gradient-to-r from-defi-accent via-defi-purple to-defi-cyan transition-all duration-700 ease-out rounded-full relative"
-                    style={{ width: `${Math.min(totalAllocatedWeight, 100)}%` }}
-                  >
-                    {/* Animated shimmer effect */}
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer" />
-                  </div>
-                </div>
-                <span className="text-[11px] font-mono font-semibold text-defi-text-secondary min-w-[32px] text-right">
-                  {Math.round(totalAllocatedWeight)}%
-                </span>
-              </div>
-            )}
+      {/* Footer - Streamlined */}
+      <div className="border-t border-defi-border/40 px-4 py-3 shrink-0">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-baseline gap-1.5">
+            <span className={`font-mono font-bold text-lg tabular-nums ${activeYield >= 15 ? 'text-defi-success' : activeYield >= 8 ? 'text-defi-warning' : 'text-defi-text'}`}>
+              {activeYield.toFixed(2)}%
+            </span>
+            <span className="text-[10px] text-defi-text-muted">APY</span>
           </div>
+          {totalAllocatedWeight > 0 && (
+            <div className="flex items-center gap-2">
+              <div className="h-1.5 w-16 bg-defi-bg-secondary rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-defi-accent to-defi-purple rounded-full"
+                  style={{ width: `${Math.min(totalAllocatedWeight, 100)}%` }}
+                />
+              </div>
+              <span className="text-[10px] font-mono text-defi-text-muted">{Math.round(totalAllocatedWeight)}%</span>
+            </div>
+          )}
         </div>
-
-        {/* Vault Actions */}
-        <div className="flex gap-3">
+        <div className="flex gap-2">
           <button
-            onClick={() => {
-              setVaultAction('deposit');
-              setShowVaultModal(true);
-            }}
-            className="flex-1 px-4 py-3 rounded-xl bg-gradient-to-r from-defi-accent to-defi-purple text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-lg shadow-defi-accent/20 hover:shadow-xl hover:shadow-defi-accent/30 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
+            onClick={() => { setVaultAction('deposit'); setShowVaultModal(true); }}
+            className="flex-1 px-3 py-2 rounded-lg bg-gradient-to-r from-defi-accent to-defi-purple text-white font-medium text-xs flex items-center justify-center gap-1.5 hover:opacity-90 transition-opacity"
           >
-            <ArrowDownToLine className="w-4 h-4" />
-            Deposit
+            <ArrowDownToLine className="w-3.5 h-3.5" /> Deposit
           </button>
           <button
-            onClick={() => {
-              setVaultAction('withdraw');
-              setShowVaultModal(true);
-            }}
-            className="flex-1 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-defi-text font-semibold text-sm flex items-center justify-center gap-2 hover:bg-white/10 hover:border-white/20 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200"
+            onClick={() => { setVaultAction('withdraw'); setShowVaultModal(true); }}
+            className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-defi-text font-medium text-xs flex items-center justify-center gap-1.5 hover:bg-white/10 transition-colors"
           >
-            <ArrowUpFromLine className="w-4 h-4" />
-            Withdraw
+            <ArrowUpFromLine className="w-3.5 h-3.5" /> Withdraw
           </button>
         </div>
       </div>

@@ -15,11 +15,16 @@ async function testConnections() {
         await pool.query('SELECT NOW()');
         logger.info('✅ PostgreSQL connection successful');
 
-        // Test Redis
-        await redis.ping();
-        logger.info('✅ Redis connection successful');
+        // Test Redis (optional - gracefully degrade if unavailable)
+        try {
+            await redis.ping();
+            logger.info('✅ Redis connection successful');
+        } catch (redisError) {
+            logger.warn('⚠️  Redis not available - caching disabled:', redisError);
+            logger.info('📝 App will continue without Redis caching');
+        }
     } catch (error) {
-        logger.error('❌ Connection test failed:', error);
+        logger.error('❌ Database connection failed:', error);
         process.exit(1);
     }
 }
@@ -57,14 +62,22 @@ async function startServer() {
 process.on('SIGTERM', async () => {
     logger.info('SIGTERM received, shutting down gracefully...');
     await pool.end();
-    await redis.quit();
+    try {
+        await redis.quit();
+    } catch (e) {
+        // Redis might not be connected
+    }
     process.exit(0);
 });
 
 process.on('SIGINT', async () => {
     logger.info('SIGINT received, shutting down gracefully...');
     await pool.end();
-    await redis.quit();
+    try {
+        await redis.quit();
+    } catch (e) {
+        // Redis might not be connected
+    }
     process.exit(0);
 });
 

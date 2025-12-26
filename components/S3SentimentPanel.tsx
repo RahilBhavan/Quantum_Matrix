@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCw, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Minus, AlertCircle, Zap } from 'lucide-react';
-import { ResponsiveContainer, LineChart, Line, Tooltip } from 'recharts';
+import { RefreshCw, TrendingUp, TrendingDown, Minus, AlertCircle, Zap, X, Activity, Globe, BarChart3, Brain } from 'lucide-react';
+import { ResponsiveContainer, LineChart, Line, Tooltip, AreaChart, Area, RadialBarChart, RadialBar } from 'recharts';
 import { toast } from './ToastProvider';
-
 
 interface S3Components {
     S_lex: number;
@@ -56,9 +55,8 @@ interface S3SentimentPanelProps {
 const S3SentimentPanel: React.FC<S3SentimentPanelProps> = ({ onAnalyze, initialData, compact = false }) => {
     const [data, setData] = useState<S3Result | null>(initialData || null);
     const [isLoading, setIsLoading] = useState(false);
-    const [isExpanded, setIsExpanded] = useState(false);
     const [history, setHistory] = useState<Array<{ time: string; score: number }>>([]);
-    const [showDetails, setShowDetails] = useState(false);
+    const [showModal, setShowModal] = useState(false);
 
     useEffect(() => {
         if (!data) {
@@ -73,7 +71,7 @@ const S3SentimentPanel: React.FC<S3SentimentPanelProps> = ({ onAnalyze, initialD
                     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                     score: data.normalizedScore
                 };
-                return [...prev, newPoint].slice(-10);
+                return [...prev, newPoint].slice(-12);
             });
         }
     }, [data?.normalizedScore]);
@@ -85,6 +83,7 @@ const S3SentimentPanel: React.FC<S3SentimentPanelProps> = ({ onAnalyze, initialD
             const result = await onAnalyze();
             if (result) {
                 setData(result);
+                toast.success('Sentiment data updated');
             }
         } catch (error) {
             console.error('Failed to fetch S³ score:', error);
@@ -97,237 +96,67 @@ const S3SentimentPanel: React.FC<S3SentimentPanelProps> = ({ onAnalyze, initialD
     const getLabelColor = (label: string) => {
         if (label === 'Bullish' || label === 'Euphoric') return 'text-defi-success';
         if (label === 'Bearish') return 'text-defi-danger';
-        return 'text-gray-600';
+        return 'text-defi-text-muted';
     };
 
-    const getConfidenceColor = (confidence: number) => {
-        if (confidence >= 0.8) return 'bg-defi-success';
-        if (confidence >= 0.6) return 'bg-yellow-500';
-        return 'bg-defi-danger';
+    const getLabelBg = (label: string) => {
+        if (label === 'Bullish' || label === 'Euphoric') return 'from-defi-success/20 to-defi-cyan/20';
+        if (label === 'Bearish') return 'from-defi-danger/20 to-defi-warning/20';
+        return 'from-defi-card to-defi-card';
     };
 
-    const ComponentBar: React.FC<{ label: string; value: number; weight: number }> = ({ label, value, weight }) => {
-        const percentage = ((value + 1) / 2) * 100; // Convert -1 to +1 to 0-100%
+    const getScoreColor = (score: number) => {
+        if (score >= 70) return '#10B981';
+        if (score >= 50) return '#7C3AED';
+        if (score >= 30) return '#F59E0B';
+        return '#EF4444';
+    };
+
+    const ComponentCard: React.FC<{ label: string; value: number; weight: number; icon: React.ReactNode }> = ({ label, value, weight, icon }) => {
         const isPositive = value > 0;
+        const percentage = Math.abs(value) * 100;
 
         return (
-            <div className="flex items-center gap-2 text-xs">
-                <span className="w-20 text-gray-600 truncate">{label}</span>
-                <div className="flex-1 h-2 bg-gray-200 relative overflow-hidden">
-                    <div
-                        className={`absolute h-full transition-all duration-500 ${isPositive ? 'bg-defi-success' : 'bg-defi-danger'}`}
-                        style={{
-                            width: `${Math.abs(value) * 50}%`,
-                            left: isPositive ? '50%' : `${50 - Math.abs(value) * 50}%`
-                        }}
-                    />
-                    <div className="absolute left-1/2 top-0 bottom-0 w-px bg-black" />
+            <div className="glass-card p-4 rounded-xl border border-defi-border hover:border-defi-accent/30 transition-all duration-300">
+                <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-lg bg-defi-purple/20 flex items-center justify-center">
+                            {icon}
+                        </div>
+                        <span className="text-sm font-semibold text-defi-text">{label}</span>
+                    </div>
+                    <span className="text-xs font-mono px-2 py-1 rounded bg-defi-card text-defi-text-muted">
+                        {(weight * 100).toFixed(0)}% weight
+                    </span>
                 </div>
-                <span className="w-10 text-right font-mono text-gray-500">{(weight * 100).toFixed(0)}%</span>
+                <div className="flex items-center gap-3">
+                    <div className="flex-1 h-2 bg-defi-card rounded-full overflow-hidden">
+                        <div
+                            className={`h-full transition-all duration-500 rounded-full ${isPositive ? 'bg-gradient-to-r from-defi-success to-defi-cyan' : 'bg-gradient-to-r from-defi-danger to-defi-warning'}`}
+                            style={{ width: `${percentage}%` }}
+                        />
+                    </div>
+                    <span className={`text-sm font-mono font-bold ${isPositive ? 'text-defi-success' : 'text-defi-danger'}`}>
+                        {isPositive ? '+' : ''}{value.toFixed(2)}
+                    </span>
+                </div>
             </div>
         );
     };
 
-    const DetailedView = () => (
-        <div className="bg-white shadow-brutal-sm relative overflow-hidden h-full flex flex-col">
-            {data ? (
-                <>
-                    {/* Main Score Display */}
-                    <div className="p-4 border-b border-gray-200">
-                        <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-2">
-                                {data.label === 'Bullish' || data.label === 'Euphoric' ? (
-                                    <TrendingUp className={`w-5 h-5 ${getLabelColor(data.label)}`} />
-                                ) : data.label === 'Bearish' ? (
-                                    <TrendingDown className={`w-5 h-5 ${getLabelColor(data.label)}`} />
-                                ) : (
-                                    <Minus className={`w-5 h-5 ${getLabelColor(data.label)}`} />
-                                )}
-                                <span className={`text-xl font-display font-bold uppercase ${getLabelColor(data.label)}`}>
-                                    {data.label}
-                                </span>
-                            </div>
-                            <span className="text-3xl font-mono font-bold">{data.normalizedScore}</span>
-                        </div>
-
-                        {/* Confidence Bar */}
-                        <div className="flex items-center gap-2 mb-3">
-                            <span className="text-[10px] text-gray-500 uppercase">Confidence</span>
-                            <div className="flex-1 h-1.5 bg-gray-200 overflow-hidden">
-                                <div
-                                    className={`h-full transition-all duration-500 ${getConfidenceColor(data.confidence)}`}
-                                    style={{ width: `${data.confidence * 100}%` }}
-                                />
-                            </div>
-                            <span className="text-xs font-mono font-bold">{Math.round(data.confidence * 100)}%</span>
-                        </div>
-
-                        {/* Mini Chart */}
-                        {history.length > 1 && (
-                            <div className="h-10 w-full">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={history}>
-                                        <Tooltip
-                                            content={({ active, payload }) => {
-                                                if (active && payload && payload.length) {
-                                                    return (
-                                                        <div className="bg-black text-white px-2 py-1 text-[10px] font-mono">
-                                                            {payload[0].payload.time}: {payload[0].value}
-                                                        </div>
-                                                    );
-                                                }
-                                                return null;
-                                            }}
-                                        />
-                                        <Line
-                                            type="monotone"
-                                            dataKey="score"
-                                            stroke="#7C3AED"
-                                            strokeWidth={2}
-                                            dot={false}
-                                            activeDot={{ r: 3, fill: '#7C3AED' }}
-                                        />
-                                    </LineChart>
-                                </ResponsiveContainer>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Expandable Components Section */}
-                    <button
-                        onClick={() => setIsExpanded(!isExpanded)}
-                        className="w-full px-4 py-2 flex items-center justify-between bg-gray-50 hover:bg-gray-100 transition-colors"
-                    >
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
-                            Signal Components
-                        </span>
-                        {isExpanded ? (
-                            <ChevronUp className="w-3 h-3 text-gray-500" />
-                        ) : (
-                            <ChevronDown className="w-3 h-3 text-gray-500" />
-                        )}
-                    </button>
-
-                    {isExpanded && (
-                        <div className="px-4 py-3 space-y-2 bg-gray-50 border-t border-gray-200 overflow-y-auto max-h-[300px] custom-scrollbar">
-                            <ComponentBar label="Fear & Greed" value={data.components.S_lex} weight={data.weights.w_lex} />
-                            <ComponentBar label="Reddit" value={data.components.S_ml} weight={data.weights.w_ml} />
-                            <ComponentBar label="News Trend" value={data.components.S_dl} weight={data.weights.w_dl} />
-                            <ComponentBar label="Gemini AI" value={data.components.S_trans} weight={data.weights.w_trans} />
-                            <ComponentBar label="Macro Econ" value={data.components.S_macro} weight={data.weights.w_macro} />
-
-                            {/* Macro Signals Breakdown */}
-                            {data.macroSignals && (
-                                <div className="mt-3 pt-3 border-t border-gray-300">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <span className="text-[10px] font-bold uppercase tracking-wider text-gray-600">
-                                            Macro Breakdown
-                                        </span>
-                                        <span className={`text-[9px] px-1.5 py-0.5 font-mono uppercase ${
-                                            data.macroSignals.dataFreshness === 'fresh'
-                                                ? 'bg-green-100 text-green-700'
-                                                : data.macroSignals.dataFreshness === 'stale'
-                                                ? 'bg-yellow-100 text-yellow-700'
-                                                : 'bg-gray-100 text-gray-600'
-                                        }`}>
-                                            {data.macroSignals.dataFreshness}
-                                        </span>
-                                    </div>
-                                    <div className="space-y-1.5">
-                                        <div className="flex items-center justify-between text-[10px]">
-                                            <span className="text-gray-600">CPI (Inflation)</span>
-                                            <span className={`font-mono ${
-                                                data.macroSignals.cpiSignal > 0.1 ? 'text-defi-success' :
-                                                data.macroSignals.cpiSignal < -0.1 ? 'text-defi-danger' :
-                                                'text-gray-500'
-                                            }`}>
-                                                {(data.macroSignals.cpiSignal >= 0 ? '+' : '') + data.macroSignals.cpiSignal.toFixed(2)}
-                                            </span>
-                                        </div>
-                                        <div className="flex items-center justify-between text-[10px]">
-                                            <span className="text-gray-600">Fed Funds Rate</span>
-                                            <span className={`font-mono ${
-                                                data.macroSignals.rateSignal > 0.1 ? 'text-defi-success' :
-                                                data.macroSignals.rateSignal < -0.1 ? 'text-defi-danger' :
-                                                'text-gray-500'
-                                            }`}>
-                                                {(data.macroSignals.rateSignal >= 0 ? '+' : '') + data.macroSignals.rateSignal.toFixed(2)}
-                                            </span>
-                                        </div>
-                                        <div className="flex items-center justify-between text-[10px]">
-                                            <span className="text-gray-600">DXY (Dollar)</span>
-                                            <span className={`font-mono ${
-                                                data.macroSignals.dxySignal > 0.1 ? 'text-defi-success' :
-                                                data.macroSignals.dxySignal < -0.1 ? 'text-defi-danger' :
-                                                'text-gray-500'
-                                            }`}>
-                                                {(data.macroSignals.dxySignal >= 0 ? '+' : '') + data.macroSignals.dxySignal.toFixed(2)}
-                                            </span>
-                                        </div>
-                                    </div>
-                                    <div className="mt-2 pt-2 border-t border-gray-200">
-                                        <div className="flex items-center gap-2">
-                                            <span className={`text-[9px] px-1.5 py-0.5 font-bold uppercase ${
-                                                data.macroSignals.interpretation.signal === 'bullish' ? 'bg-defi-success/10 text-defi-success' :
-                                                data.macroSignals.interpretation.signal === 'bearish' ? 'bg-defi-danger/10 text-defi-danger' :
-                                                'bg-gray-100 text-gray-600'
-                                            }`}>
-                                                {data.macroSignals.interpretation.signal}
-                                            </span>
-                                            <span className="text-[9px] text-gray-500 uppercase">
-                                                {data.macroSignals.interpretation.strength}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                            {data.disagreementResolved && data.resolution && (
-                                <div className="mt-2 pt-2 border-t border-gray-200 flex items-center gap-2">
-                                    <AlertCircle className="w-3 h-3 text-yellow-500" />
-                                    <span className="text-[10px] text-gray-500">
-                                        Resolved via {data.resolution.source} ({data.resolution.signal})
-                                    </span>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {/* Trending Topics */}
-                    {data.trendingTopics.length > 0 && (
-                        <div className="px-4 py-2 border-t border-gray-200 bg-black mt-auto">
-                            <div className="flex flex-wrap gap-1">
-                                {data.trendingTopics.slice(0, 4).map((topic, i) => (
-                                    <span
-                                        key={i}
-                                        className="text-[9px] px-1.5 py-0.5 bg-white/10 text-white font-mono uppercase"
-                                    >
-                                        {topic}
-                                    </span>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                </>
-            ) : (
-                <div className="h-24 bg-gray-100 animate-pulse" />
-            )}
-        </div>
-    );
-
+    // Compact Header Button
     if (compact) {
         return (
             <>
-                <button 
-                    onClick={() => setShowDetails(true)}
-                    className="flex items-center gap-3 px-3 py-1.5 bg-white border-2 border-black hover:bg-gray-50 transition-colors shadow-brutal-sm hover:shadow-brutal h-10"
+                <button
+                    onClick={() => setShowModal(true)}
+                    className="flex items-center gap-2 px-4 py-2 glass-card border border-defi-border hover:border-defi-accent/50 transition-all duration-300 rounded-xl group"
                 >
-                    <div className="flex items-center gap-2">
-                        <Zap className="w-4 h-4 text-defi-purple" />
-                        <span className="text-xs font-bold uppercase tracking-wider hidden md:block">S³ Sentiment</span>
+                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-defi-purple to-defi-accent flex items-center justify-center shadow-glow-purple">
+                        <Zap className="w-4 h-4 text-white" />
                     </div>
                     {data ? (
-                        <div className="flex items-center gap-2 pl-2 border-l-2 border-gray-200">
+                        <div className="flex items-center gap-2">
                             {data.label === 'Bullish' || data.label === 'Euphoric' ? (
                                 <TrendingUp className={`w-4 h-4 ${getLabelColor(data.label)}`} />
                             ) : data.label === 'Bearish' ? (
@@ -335,32 +164,284 @@ const S3SentimentPanel: React.FC<S3SentimentPanelProps> = ({ onAnalyze, initialD
                             ) : (
                                 <Minus className={`w-4 h-4 ${getLabelColor(data.label)}`} />
                             )}
-                            <span className="font-mono font-bold text-sm">{data.normalizedScore}</span>
+                            <span className="font-mono font-bold text-lg text-defi-text">{data.normalizedScore}</span>
+                            <span className={`text-xs font-semibold uppercase hidden lg:block ${getLabelColor(data.label)}`}>
+                                {data.label}
+                            </span>
                         </div>
+                    ) : isLoading ? (
+                        <RefreshCw className="w-4 h-4 animate-spin text-defi-accent" />
                     ) : (
-                        <RefreshCw className="w-3 h-3 animate-spin text-gray-400" />
+                        <span className="text-xs text-defi-text-muted">Load S³</span>
                     )}
                 </button>
 
-                {showDetails && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={() => setShowDetails(false)}>
-                        <div className="bg-white border-2 border-black w-full max-w-sm max-h-[80vh] flex flex-col shadow-brutal" onClick={e => e.stopPropagation()}>
-                            <div className="flex justify-between items-center p-3 border-b-2 border-black bg-gray-50">
-                                <h3 className="font-bold uppercase text-sm flex items-center gap-2">
-                                    <Zap className="w-4 h-4 text-defi-purple" />
-                                    S³ Sentiment Analysis
-                                </h3>
-                                <div className="flex items-center gap-2">
-                                    <button onClick={(e) => handleRefresh(e)} className="p-1 hover:bg-gray-200 rounded">
-                                        <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
+                {/* Full Page Modal */}
+                {showModal && (
+                    <div
+                        className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8 bg-black/80 backdrop-blur-md animate-fade-in"
+                        onClick={() => setShowModal(false)}
+                    >
+                        <div
+                            className="w-full max-w-4xl max-h-[90vh] overflow-y-auto glass-dark border border-defi-border rounded-3xl shadow-glass-lg animate-scale-in"
+                            onClick={e => e.stopPropagation()}
+                        >
+                            {/* Header */}
+                            <div className="sticky top-0 z-10 flex items-center justify-between p-6 border-b border-defi-border bg-defi-bg/80 backdrop-blur-xl rounded-t-3xl">
+                                <div className="flex items-center gap-4">
+                                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-defi-purple to-defi-accent flex items-center justify-center shadow-glow-purple">
+                                        <Zap className="w-6 h-6 text-white" />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-2xl font-display font-bold text-defi-text">S³ Sentiment Analysis</h2>
+                                        <p className="text-sm text-defi-text-secondary">Sentiment Synthesis Score • Real-time Market Intelligence</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        onClick={(e) => handleRefresh(e)}
+                                        disabled={isLoading}
+                                        className="p-3 rounded-xl glass-card border border-defi-border hover:border-defi-accent/50 transition-all"
+                                    >
+                                        <RefreshCw className={`w-5 h-5 text-defi-text-secondary ${isLoading ? 'animate-spin' : ''}`} />
                                     </button>
-                                    <button onClick={() => setShowDetails(false)} className="p-1 hover:bg-gray-200 rounded">
-                                        <Minus className="w-4 h-4" />
+                                    <button
+                                        onClick={() => setShowModal(false)}
+                                        className="p-3 rounded-xl glass-card border border-defi-border hover:border-defi-danger/50 hover:bg-defi-danger/10 transition-all"
+                                    >
+                                        <X className="w-5 h-5 text-defi-text-secondary" />
                                     </button>
                                 </div>
                             </div>
-                            <div className="flex-1 overflow-hidden">
-                                <DetailedView />
+
+                            {/* Content */}
+                            <div className="p-6 space-y-6">
+                                {data ? (
+                                    <>
+                                        {/* Main Score Section */}
+                                        <div className={`p-8 rounded-2xl bg-gradient-to-br ${getLabelBg(data.label)} border border-defi-border`}>
+                                            <div className="flex flex-col md:flex-row items-center justify-between gap-8">
+                                                {/* Score Display */}
+                                                <div className="flex items-center gap-6">
+                                                    <div className="relative">
+                                                        <div className="w-32 h-32 rounded-full bg-defi-card/50 flex items-center justify-center border-4 border-defi-border">
+                                                            <span className="text-5xl font-mono font-bold text-defi-text">{data.normalizedScore}</span>
+                                                        </div>
+                                                        <div
+                                                            className="absolute inset-0 rounded-full"
+                                                            style={{
+                                                                background: `conic-gradient(${getScoreColor(data.normalizedScore)} ${data.normalizedScore}%, transparent ${data.normalizedScore}%)`,
+                                                                opacity: 0.3
+                                                            }}
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <div className="flex items-center gap-2 mb-2">
+                                                            {data.label === 'Bullish' || data.label === 'Euphoric' ? (
+                                                                <TrendingUp className={`w-8 h-8 ${getLabelColor(data.label)}`} />
+                                                            ) : data.label === 'Bearish' ? (
+                                                                <TrendingDown className={`w-8 h-8 ${getLabelColor(data.label)}`} />
+                                                            ) : (
+                                                                <Minus className={`w-8 h-8 ${getLabelColor(data.label)}`} />
+                                                            )}
+                                                            <span className={`text-3xl font-display font-bold uppercase ${getLabelColor(data.label)}`}>
+                                                                {data.label}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="text-sm text-defi-text-secondary">Confidence:</span>
+                                                            <div className="w-24 h-2 bg-defi-card rounded-full overflow-hidden">
+                                                                <div
+                                                                    className="h-full bg-gradient-to-r from-defi-accent to-defi-purple rounded-full"
+                                                                    style={{ width: `${data.confidence * 100}%` }}
+                                                                />
+                                                            </div>
+                                                            <span className="text-sm font-mono font-bold text-defi-text">{Math.round(data.confidence * 100)}%</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Mini Chart */}
+                                                {history.length > 1 && (
+                                                    <div className="flex-1 h-32 min-w-[200px]">
+                                                        <ResponsiveContainer width="100%" height="100%">
+                                                            <AreaChart data={history}>
+                                                                <defs>
+                                                                    <linearGradient id="scoreGradient" x1="0" y1="0" x2="0" y2="1">
+                                                                        <stop offset="5%" stopColor="#7C3AED" stopOpacity={0.3} />
+                                                                        <stop offset="95%" stopColor="#7C3AED" stopOpacity={0} />
+                                                                    </linearGradient>
+                                                                </defs>
+                                                                <Tooltip
+                                                                    content={({ active, payload }) => {
+                                                                        if (active && payload && payload.length) {
+                                                                            return (
+                                                                                <div className="glass-dark text-defi-text px-3 py-2 text-sm font-mono rounded-lg border border-defi-border">
+                                                                                    {payload[0].payload.time}: <span className="font-bold">{payload[0].value}</span>
+                                                                                </div>
+                                                                            );
+                                                                        }
+                                                                        return null;
+                                                                    }}
+                                                                />
+                                                                <Area
+                                                                    type="monotone"
+                                                                    dataKey="score"
+                                                                    stroke="#7C3AED"
+                                                                    strokeWidth={2}
+                                                                    fill="url(#scoreGradient)"
+                                                                />
+                                                            </AreaChart>
+                                                        </ResponsiveContainer>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Summary */}
+                                        {data.summary && (
+                                            <div className="glass-card p-6 rounded-2xl border border-defi-border">
+                                                <h3 className="text-sm font-semibold uppercase tracking-wider text-defi-text-secondary mb-3">Market Summary</h3>
+                                                <p className="text-defi-text leading-relaxed">{data.summary}</p>
+                                            </div>
+                                        )}
+
+                                        {/* Signal Components Grid */}
+                                        <div>
+                                            <h3 className="text-sm font-semibold uppercase tracking-wider text-defi-text-secondary mb-4">Signal Components</h3>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                                <ComponentCard
+                                                    label="Fear & Greed Index"
+                                                    value={data.components.S_lex}
+                                                    weight={data.weights.w_lex}
+                                                    icon={<Activity className="w-4 h-4 text-defi-purple-light" />}
+                                                />
+                                                <ComponentCard
+                                                    label="Reddit Sentiment"
+                                                    value={data.components.S_ml}
+                                                    weight={data.weights.w_ml}
+                                                    icon={<BarChart3 className="w-4 h-4 text-defi-purple-light" />}
+                                                />
+                                                <ComponentCard
+                                                    label="News Trend"
+                                                    value={data.components.S_dl}
+                                                    weight={data.weights.w_dl}
+                                                    icon={<Globe className="w-4 h-4 text-defi-purple-light" />}
+                                                />
+                                                <ComponentCard
+                                                    label="Gemini AI Analysis"
+                                                    value={data.components.S_trans}
+                                                    weight={data.weights.w_trans}
+                                                    icon={<Brain className="w-4 h-4 text-defi-purple-light" />}
+                                                />
+                                                <ComponentCard
+                                                    label="Macro Economics"
+                                                    value={data.components.S_macro}
+                                                    weight={data.weights.w_macro}
+                                                    icon={<TrendingUp className="w-4 h-4 text-defi-purple-light" />}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Macro Signals */}
+                                        {data.macroSignals && (
+                                            <div className="glass-card p-6 rounded-2xl border border-defi-border">
+                                                <div className="flex items-center justify-between mb-4">
+                                                    <h3 className="text-sm font-semibold uppercase tracking-wider text-defi-text-secondary">Macro Economic Signals</h3>
+                                                    <span className={`text-xs px-2 py-1 rounded-full font-mono ${data.macroSignals.dataFreshness === 'fresh'
+                                                            ? 'bg-defi-success/20 text-defi-success'
+                                                            : data.macroSignals.dataFreshness === 'stale'
+                                                                ? 'bg-defi-warning/20 text-defi-warning'
+                                                                : 'bg-defi-card text-defi-text-muted'
+                                                        }`}>
+                                                        {data.macroSignals.dataFreshness}
+                                                    </span>
+                                                </div>
+                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                    <div className="p-4 bg-defi-card/50 rounded-xl">
+                                                        <span className="text-xs text-defi-text-muted">CPI (Inflation)</span>
+                                                        <div className={`text-xl font-mono font-bold mt-1 ${data.macroSignals.cpiSignal > 0.1 ? 'text-defi-success' :
+                                                                data.macroSignals.cpiSignal < -0.1 ? 'text-defi-danger' :
+                                                                    'text-defi-text-muted'
+                                                            }`}>
+                                                            {data.macroSignals.cpiSignal >= 0 ? '+' : ''}{data.macroSignals.cpiSignal.toFixed(2)}
+                                                        </div>
+                                                    </div>
+                                                    <div className="p-4 bg-defi-card/50 rounded-xl">
+                                                        <span className="text-xs text-defi-text-muted">Fed Funds Rate</span>
+                                                        <div className={`text-xl font-mono font-bold mt-1 ${data.macroSignals.rateSignal > 0.1 ? 'text-defi-success' :
+                                                                data.macroSignals.rateSignal < -0.1 ? 'text-defi-danger' :
+                                                                    'text-defi-text-muted'
+                                                            }`}>
+                                                            {data.macroSignals.rateSignal >= 0 ? '+' : ''}{data.macroSignals.rateSignal.toFixed(2)}
+                                                        </div>
+                                                    </div>
+                                                    <div className="p-4 bg-defi-card/50 rounded-xl">
+                                                        <span className="text-xs text-defi-text-muted">DXY (Dollar Index)</span>
+                                                        <div className={`text-xl font-mono font-bold mt-1 ${data.macroSignals.dxySignal > 0.1 ? 'text-defi-success' :
+                                                                data.macroSignals.dxySignal < -0.1 ? 'text-defi-danger' :
+                                                                    'text-defi-text-muted'
+                                                            }`}>
+                                                            {data.macroSignals.dxySignal >= 0 ? '+' : ''}{data.macroSignals.dxySignal.toFixed(2)}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                {data.macroSignals.interpretation.summary && (
+                                                    <p className="text-sm text-defi-text-secondary mt-4 leading-relaxed">
+                                                        {data.macroSignals.interpretation.summary}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* Trending Topics */}
+                                        {data.trendingTopics && data.trendingTopics.length > 0 && (
+                                            <div className="glass-card p-6 rounded-2xl border border-defi-border">
+                                                <h3 className="text-sm font-semibold uppercase tracking-wider text-defi-text-secondary mb-4">Trending Topics</h3>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {data.trendingTopics.map((topic, i) => (
+                                                        <span
+                                                            key={i}
+                                                            className="px-3 py-1.5 bg-defi-purple/20 text-defi-purple-light font-medium text-sm rounded-full border border-defi-purple/30"
+                                                        >
+                                                            #{topic}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Resolution Info */}
+                                        {data.disagreementResolved && data.resolution && (
+                                            <div className="flex items-center gap-3 p-4 bg-defi-warning/10 rounded-xl border border-defi-warning/30">
+                                                <AlertCircle className="w-5 h-5 text-defi-warning shrink-0" />
+                                                <span className="text-sm text-defi-text">
+                                                    Signal disagreement resolved via <strong>{data.resolution.source}</strong> ({data.resolution.signal})
+                                                </span>
+                                            </div>
+                                        )}
+                                    </>
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center py-16">
+                                        {isLoading ? (
+                                            <>
+                                                <RefreshCw className="w-12 h-12 animate-spin text-defi-accent mb-4" />
+                                                <p className="text-defi-text-secondary">Analyzing market sentiment...</p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Zap className="w-12 h-12 text-defi-text-muted mb-4" />
+                                                <p className="text-defi-text-secondary mb-4">No sentiment data available</p>
+                                                <button
+                                                    onClick={(e) => handleRefresh(e)}
+                                                    className="px-6 py-3 bg-gradient-to-r from-defi-accent to-defi-purple text-white font-semibold rounded-xl hover:shadow-glow-purple transition-all"
+                                                >
+                                                    Analyze Now
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -369,26 +450,86 @@ const S3SentimentPanel: React.FC<S3SentimentPanelProps> = ({ onAnalyze, initialD
         );
     }
 
-    // Default Sidebar View
+    // Default Sidebar View (non-compact)
     return (
-        <div className="p-4 border-t-2 border-black bg-white shrink-0 z-20">
-            <div className="flex justify-between items-center mb-2">
+        <div className="p-4 border-t border-defi-border glass-dark shrink-0 z-20">
+            <div className="flex justify-between items-center mb-3">
                 <div className="flex items-center gap-2">
-                    <Zap className="w-4 h-4 text-defi-purple" />
-                    <span className="text-xs font-bold uppercase tracking-wider">S³ Sentiment</span>
+                    <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-defi-purple to-defi-accent flex items-center justify-center">
+                        <Zap className="w-4 h-4 text-white" />
+                    </div>
+                    <span className="text-sm font-bold uppercase tracking-wider text-defi-text">S³ Sentiment</span>
                 </div>
                 <button
                     onClick={(e) => handleRefresh(e)}
                     disabled={isLoading}
-                    className="hover:rotate-180 transition-transform"
+                    className="p-2 rounded-lg hover:bg-defi-card transition-colors"
                 >
-                    <RefreshCw className={`w-3 h-3 text-black ${isLoading ? 'animate-spin' : ''}`} />
+                    <RefreshCw className={`w-4 h-4 text-defi-text-secondary ${isLoading ? 'animate-spin' : ''}`} />
                 </button>
             </div>
 
-            <div className="border-2 border-black">
-                <DetailedView />
-            </div>
+            {data ? (
+                <div className="glass-card rounded-xl border border-defi-border p-4">
+                    <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                            {data.label === 'Bullish' || data.label === 'Euphoric' ? (
+                                <TrendingUp className={`w-5 h-5 ${getLabelColor(data.label)}`} />
+                            ) : data.label === 'Bearish' ? (
+                                <TrendingDown className={`w-5 h-5 ${getLabelColor(data.label)}`} />
+                            ) : (
+                                <Minus className={`w-5 h-5 ${getLabelColor(data.label)}`} />
+                            )}
+                            <span className={`text-lg font-bold uppercase ${getLabelColor(data.label)}`}>
+                                {data.label}
+                            </span>
+                        </div>
+                        <span className="text-2xl font-mono font-bold text-defi-text">{data.normalizedScore}</span>
+                    </div>
+
+                    <div className="flex items-center gap-2 mb-3">
+                        <span className="text-xs text-defi-text-muted">Confidence</span>
+                        <div className="flex-1 h-1.5 bg-defi-card rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-gradient-to-r from-defi-accent to-defi-purple rounded-full"
+                                style={{ width: `${data.confidence * 100}%` }}
+                            />
+                        </div>
+                        <span className="text-xs font-mono text-defi-text">{Math.round(data.confidence * 100)}%</span>
+                    </div>
+
+                    {history.length > 1 && (
+                        <div className="h-12">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={history}>
+                                    <Line
+                                        type="monotone"
+                                        dataKey="score"
+                                        stroke="#7C3AED"
+                                        strokeWidth={2}
+                                        dot={false}
+                                    />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        </div>
+                    )}
+
+                    <button
+                        onClick={() => setShowModal(true)}
+                        className="w-full mt-3 py-2 text-xs font-semibold text-defi-accent hover:text-defi-accent-light transition-colors"
+                    >
+                        View Full Analysis →
+                    </button>
+                </div>
+            ) : (
+                <div className="glass-card rounded-xl border border-defi-border p-4 flex items-center justify-center h-24">
+                    {isLoading ? (
+                        <RefreshCw className="w-6 h-6 animate-spin text-defi-accent" />
+                    ) : (
+                        <span className="text-sm text-defi-text-muted">Click refresh to load</span>
+                    )}
+                </div>
+            )}
         </div>
     );
 };
