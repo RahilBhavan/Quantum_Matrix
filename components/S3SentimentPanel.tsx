@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import ReactDOM from 'react-dom';
 import { RefreshCw, TrendingUp, TrendingDown, Minus, AlertCircle, Zap, X, Activity, Globe, BarChart3, Brain } from 'lucide-react';
-import { ResponsiveContainer, LineChart, Line, Tooltip, AreaChart, Area, RadialBarChart, RadialBar } from 'recharts';
+import { ResponsiveContainer, LineChart, Line, Tooltip, AreaChart, Area } from 'recharts';
 import { toast } from './ToastProvider';
 
 interface S3Components {
@@ -176,10 +177,11 @@ const S3SentimentPanel: React.FC<S3SentimentPanelProps> = ({ onAnalyze, initialD
                     )}
                 </button>
 
-                {/* Full Page Modal */}
-                {showModal && (
+                {/* Full Page Modal - Using Portal */}
+                {showModal && ReactDOM.createPortal(
                     <div
-                        className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-8 bg-black/80 backdrop-blur-md animate-fade-in"
+                        className="fixed inset-0 z-[9999] flex items-center justify-center p-4 md:p-8"
+                        style={{ backgroundColor: 'rgba(0, 0, 0, 0.9)' }}
                         onClick={() => setShowModal(false)}
                     >
                         <div
@@ -349,10 +351,10 @@ const S3SentimentPanel: React.FC<S3SentimentPanelProps> = ({ onAnalyze, initialD
                                                 <div className="flex items-center justify-between mb-4">
                                                     <h3 className="text-sm font-semibold uppercase tracking-wider text-defi-text-secondary">Macro Economic Signals</h3>
                                                     <span className={`text-xs px-2 py-1 rounded-full font-mono ${data.macroSignals.dataFreshness === 'fresh'
-                                                            ? 'bg-defi-success/20 text-defi-success'
-                                                            : data.macroSignals.dataFreshness === 'stale'
-                                                                ? 'bg-defi-warning/20 text-defi-warning'
-                                                                : 'bg-defi-card text-defi-text-muted'
+                                                        ? 'bg-defi-success/20 text-defi-success'
+                                                        : data.macroSignals.dataFreshness === 'stale'
+                                                            ? 'bg-defi-warning/20 text-defi-warning'
+                                                            : 'bg-defi-card text-defi-text-muted'
                                                         }`}>
                                                         {data.macroSignals.dataFreshness}
                                                     </span>
@@ -361,8 +363,8 @@ const S3SentimentPanel: React.FC<S3SentimentPanelProps> = ({ onAnalyze, initialD
                                                     <div className="p-4 bg-defi-card/50 rounded-xl">
                                                         <span className="text-xs text-defi-text-muted">CPI (Inflation)</span>
                                                         <div className={`text-xl font-mono font-bold mt-1 ${data.macroSignals.cpiSignal > 0.1 ? 'text-defi-success' :
-                                                                data.macroSignals.cpiSignal < -0.1 ? 'text-defi-danger' :
-                                                                    'text-defi-text-muted'
+                                                            data.macroSignals.cpiSignal < -0.1 ? 'text-defi-danger' :
+                                                                'text-defi-text-muted'
                                                             }`}>
                                                             {data.macroSignals.cpiSignal >= 0 ? '+' : ''}{data.macroSignals.cpiSignal.toFixed(2)}
                                                         </div>
@@ -370,8 +372,8 @@ const S3SentimentPanel: React.FC<S3SentimentPanelProps> = ({ onAnalyze, initialD
                                                     <div className="p-4 bg-defi-card/50 rounded-xl">
                                                         <span className="text-xs text-defi-text-muted">Fed Funds Rate</span>
                                                         <div className={`text-xl font-mono font-bold mt-1 ${data.macroSignals.rateSignal > 0.1 ? 'text-defi-success' :
-                                                                data.macroSignals.rateSignal < -0.1 ? 'text-defi-danger' :
-                                                                    'text-defi-text-muted'
+                                                            data.macroSignals.rateSignal < -0.1 ? 'text-defi-danger' :
+                                                                'text-defi-text-muted'
                                                             }`}>
                                                             {data.macroSignals.rateSignal >= 0 ? '+' : ''}{data.macroSignals.rateSignal.toFixed(2)}
                                                         </div>
@@ -379,8 +381,8 @@ const S3SentimentPanel: React.FC<S3SentimentPanelProps> = ({ onAnalyze, initialD
                                                     <div className="p-4 bg-defi-card/50 rounded-xl">
                                                         <span className="text-xs text-defi-text-muted">DXY (Dollar Index)</span>
                                                         <div className={`text-xl font-mono font-bold mt-1 ${data.macroSignals.dxySignal > 0.1 ? 'text-defi-success' :
-                                                                data.macroSignals.dxySignal < -0.1 ? 'text-defi-danger' :
-                                                                    'text-defi-text-muted'
+                                                            data.macroSignals.dxySignal < -0.1 ? 'text-defi-danger' :
+                                                                'text-defi-text-muted'
                                                             }`}>
                                                             {data.macroSignals.dxySignal >= 0 ? '+' : ''}{data.macroSignals.dxySignal.toFixed(2)}
                                                         </div>
@@ -444,8 +446,7 @@ const S3SentimentPanel: React.FC<S3SentimentPanelProps> = ({ onAnalyze, initialD
                                 )}
                             </div>
                         </div>
-                    </div>
-                )}
+                    </div>, document.body)}
             </>
         );
     }
